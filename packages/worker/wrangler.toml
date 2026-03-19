@@ -1,0 +1,38 @@
+name = "fontinass-worker"
+main = "src/index.ts"
+compatibility_date = "2025-03-01"
+compatibility_flags = ["nodejs_compat"]
+
+[build]
+command = ""
+
+[observability]
+enabled = true
+[observability.logs]
+invocation_logs = true
+
+# Serve the Vite-built frontend as static assets from the same Worker.
+# Run `pnpm build` (root) to build web first, then `pnpm deploy`.
+# Static assets are served directly from CF edge; unmatched paths hit the Worker.
+[assets]
+directory = "../web/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[[r2_buckets]]
+binding = "FONTS_BUCKET"
+bucket_name = "fontinass-r2"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fontinass-d1"
+database_id = "d61a9acd-e288-4a29-939a-53bd4d573a11"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "95c37da747f84ee0b0bd6ad12df0d678"
+
+[vars]
+CORS_ORIGIN = "*"
+# API_KEY should be set as a secret: `wrangler secret put API_KEY`
+# Only /api/fonts/* routes require it; subset processing is public.

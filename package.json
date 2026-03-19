@@ -1,0 +1,17 @@
+{
+  "name": "fontinass",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter worker dev",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "release": "pnpm build && cd packages/worker && wrangler deploy",
+    "test": "pnpm --filter worker test",
+    "migrate": "cd packages/worker && wrangler d1 migrations apply fontinass-d1 --remote"
+  },
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  }
+}

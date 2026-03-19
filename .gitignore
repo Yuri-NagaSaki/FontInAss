@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Auto-generated
+auto-imports.d.ts
+components.d.ts
+
+# Cloudflare
+.wrangler/
+.dev.vars
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment (commit .env.development and .env.production; ignore secrets)
+.env
+.env.local
+.env.*.local
+!.env.development
+!.env.production
+!.env.example
+**/node_modules/
+node_modules/
