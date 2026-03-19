@@ -6,6 +6,14 @@
  *  2. Build a new Font with only the glyphs needed (+ .notdef)
  *  3. Preserve family/subfamily names and os2/name tables
  *  4. Encode result with UUencode for embedding in ASS [Fonts] section
+ *
+ * Memory strategy for large fonts (Worker 128 MB limit):
+ *  - Phase 1: extractGlyphsFromFont() parses orig inside its own call frame.
+ *    When it returns, buf + orig + their glyph caches (~60–80 MB for CJK) are
+ *    immediately GC-eligible.
+ *  - await Promise.resolve() between phases gives V8 a chance to collect
+ *    Phase 1 memory before allocating the newFont object graph in Phase 2.
+ *  - This halves peak memory for fonts like 46 MB CJK TTFs.
  */
 
 import * as opentype from "opentype.js";
@@ -19,15 +27,101 @@ export interface FontSubsetResult {
   error: string | null;
 }
 
+// ─── Phase-1 helper ──────────────────────────────────────────────────────────
+// Parses the font inside its own function scope so buf + orig + their glyph
+// caches are GC-eligible as soon as this returns (before newFont is built).
+interface ExtractedFont {
+  glyphs:     opentype.Glyph[];
+  missing:    string[];
+  unitsPerEm: number;
+  ascender:   number;
+  descender:  number;
+  nameTable:  unknown;
+  os2Table:   Record<string, unknown> | null;
+}
+
+function extractGlyphsFromFont(
+  fontBytes: Uint8Array,
+  faceIndex: number,
+  unicodes: Set<number>,
+): ExtractedFont {
+  // Avoid a full buffer copy when byteOffset is 0 (saves ~20 MB for large fonts).
+  const buf = (fontBytes.byteOffset === 0 && fontBytes.byteLength === fontBytes.buffer.byteLength)
+    ? fontBytes.buffer as ArrayBuffer
+    : fontBytes.buffer.slice(
+        fontBytes.byteOffset,
+        fontBytes.byteOffset + fontBytes.byteLength,
+      ) as ArrayBuffer;
+
+  // lowMemory: true defers glyph parsing until each glyph is accessed —
+  // critical for CJK fonts (20k–70k glyphs). Without it, opentype.js eagerly
+  // creates JS objects for every glyph (~100 MB peak).
+  const orig: opentype.Font = isTTC(fontBytes)
+    ? parseTTCFace(buf, faceIndex)
+    : opentype.parse(buf, { lowMemory: true });
+
+  // .notdef must always be the first glyph
+  const origNotdef = orig.glyphs.get(0);
+  const notdef = new opentype.Glyph({
+    name: ".notdef",
+    unicode: 0,
+    advanceWidth: origNotdef?.advanceWidth ?? 500,
+    path: new opentype.Path(),
+  });
+
+  const glyphs: opentype.Glyph[] = [notdef];
+  const seen     = new Set<number>([0]);
+  const missing: string[] = [];
+
+  for (const cp of unicodes) {
+    if (seen.has(cp)) continue;
+    const char = String.fromCodePoint(cp);
+    const origGlyph = orig.charToGlyph(char);
+
+    if (!origGlyph || origGlyph.index === 0) {
+      missing.push(char);
+      continue;
+    }
+
+    // Render the glyph path (handles composite glyphs, hinting refs, etc.)
+    const rendered = orig.getPath(char, 0, 0, orig.unitsPerEm);
+    const newPath  = new opentype.Path();
+
+    for (const cmd of rendered.commands) {
+      switch (cmd.type) {
+        case "M": newPath.moveTo(cmd.x, -cmd.y); break;
+        case "L": newPath.lineTo(cmd.x, -cmd.y); break;
+        case "C": newPath.curveTo(cmd.x1!, -cmd.y1!, cmd.x2!, -cmd.y2!, cmd.x, -cmd.y); break;
+        case "Q": newPath.quadraticCurveTo(cmd.x1!, -cmd.y1!, cmd.x, -cmd.y); break;
+        case "Z": newPath.close(); break;
+      }
+    }
+
+    // Our Glyph objects contain fresh Path data — independent of orig/buf.
+    glyphs.push(new opentype.Glyph({
+      name: origGlyph.name || `glyph_${cp}`,
+      unicode: cp,
+      advanceWidth: origGlyph.advanceWidth,
+      path: newPath,
+    }));
+    seen.add(cp);
+  }
+
+  return {
+    glyphs,
+    missing,
+    unitsPerEm: orig.unitsPerEm,
+    ascender:   orig.ascender,
+    descender:  orig.descender,
+    nameTable:  orig.tables?.name ?? null,
+    // Shallow-copy os2 so it's independent of orig's buffer reference
+    os2Table:   orig.tables?.os2 ? { ...orig.tables.os2 as Record<string, unknown> } : null,
+  };
+  // buf and orig go out of scope here → GC-eligible immediately.
+}
+
 /**
  * Subset a font to only include the given Unicode codepoints.
- *
- * @param fontBytes - Raw font file bytes (TTF/OTF or TTC)
- * @param faceIndex - Face index within TTC (0 for single-face fonts)
- * @param fontName  - Family name used for the output filename tag
- * @param weight    - Font weight (400/700/etc.)
- * @param italic    - Whether the font is italic
- * @param unicodes  - Set of Unicode codepoints to include
  */
 export async function subsetFont(
   fontBytes: Uint8Array,
@@ -38,110 +132,46 @@ export async function subsetFont(
   unicodes: Set<number>,
 ): Promise<FontSubsetResult> {
   try {
-    // Avoid copying the buffer when possible (saves 20-30 MB per CJK font)
-    const buf = (fontBytes.byteOffset === 0 && fontBytes.byteLength === fontBytes.buffer.byteLength)
-      ? fontBytes.buffer as ArrayBuffer
-      : fontBytes.buffer.slice(
-          fontBytes.byteOffset,
-          fontBytes.byteOffset + fontBytes.byteLength,
-        ) as ArrayBuffer;
+    // ── Phase 1: Extract glyphs (buf + orig go out of scope on return) ───────
+    const extracted = extractGlyphsFromFont(fontBytes, faceIndex, unicodes);
 
-    // Parse the face — TTC files need an explicit offset.
-    // lowMemory: true defers glyph parsing until each glyph is accessed —
-    // critical for CJK fonts which have 20,000–70,000 glyphs. Without this,
-    // opentype.js eagerly creates JS objects for every glyph (~100 MB peak).
-    let orig: opentype.Font;
-    if (isTTC(fontBytes)) {
-      orig = parseTTCFace(buf, faceIndex);
-    } else {
-      orig = opentype.parse(buf, { lowMemory: true });
-    }
+    // Yield to give V8 a chance to GC the original font buffer (~46 MB for
+    // large CJK fonts) before we allocate the newFont object graph.
+    await Promise.resolve();
 
-    // Build subset glyphs: .notdef first, then requested codepoints
-    const origNotdef = orig.glyphs.get(0);
-    const notdef = new opentype.Glyph({
-      name: ".notdef",
-      unicode: 0,
-      advanceWidth: origNotdef?.advanceWidth ?? 500,
-      path: new opentype.Path(),
-    });
-
-    const glyphs: opentype.Glyph[] = [notdef];
-    const seen = new Set<number>([0]);
-    const missing: string[] = [];
-
-    for (const cp of unicodes) {
-      if (seen.has(cp)) continue;
-      const char = String.fromCodePoint(cp);
-      const origGlyph = orig.charToGlyph(char);
-
-      if (!origGlyph || origGlyph.index === 0) {
-        missing.push(char);
-        continue;
-      }
-
-      // Render the glyph path through opentype.js layout engine
-      // (handles composite glyphs, hinting references, etc.)
-      const rendered = orig.getPath(char, 0, 0, orig.unitsPerEm);
-      const newPath = new opentype.Path();
-
-      for (const cmd of rendered.commands) {
-        switch (cmd.type) {
-          case "M": newPath.moveTo(cmd.x, -cmd.y); break;
-          case "L": newPath.lineTo(cmd.x, -cmd.y); break;
-          case "C": newPath.curveTo(cmd.x1!, -cmd.y1!, cmd.x2!, -cmd.y2!, cmd.x, -cmd.y); break;
-          case "Q": newPath.quadraticCurveTo(cmd.x1!, -cmd.y1!, cmd.x, -cmd.y); break;
-          case "Z": newPath.close(); break;
-        }
-      }
-
-      glyphs.push(new opentype.Glyph({
-        name: origGlyph.name || `glyph_${cp}`,
-        unicode: cp,
-        advanceWidth: origGlyph.advanceWidth,
-        path: newPath,
-      }));
-      seen.add(cp);
-    }
-
-    // Resolve family/style names from the original font
+    // ── Phase 2: Build and encode subset font ─────────────────────────────────
     const getName = (id: string | number) => {
-      const entry = orig.names[id as keyof typeof orig.names] as
-        | Record<string, string>
-        | undefined;
+      const entry = (extracted.nameTable as Record<string, Record<string, string>> | null)?.[id as string];
       if (!entry) return null;
       return entry["en"] ?? entry["en-US"] ?? Object.values(entry)[0] ?? null;
     };
 
     const familyName = (getName("fontFamily") as string | null) ?? fontName;
-    const styleName = (getName("fontSubfamily") as string | null) ?? "Regular";
+    const styleName  = (getName("fontSubfamily") as string | null) ?? "Regular";
 
     const newFont = new opentype.Font({
       familyName,
       styleName,
-      unitsPerEm: orig.unitsPerEm,
-      ascender: orig.ascender,
-      descender: orig.descender,
-      glyphs,
+      unitsPerEm: extracted.unitsPerEm,
+      ascender:   extracted.ascender,
+      descender:  extracted.descender,
+      glyphs:     extracted.glyphs,
     });
 
     // Preserve original name + os2 tables so the font remains identifiable
-    if (orig.tables?.name) newFont.tables.name = orig.tables.name;
-    if (orig.tables?.os2) newFont.tables.os2 = { ...orig.tables.os2 };
+    if (extracted.nameTable) newFont.tables.name = extracted.nameTable;
+    if (extracted.os2Table)  newFont.tables.os2  = extracted.os2Table;
 
     const subsetBytes = new Uint8Array(newFont.toArrayBuffer());
-    const encoded = uuencode(subsetBytes);
+    const encoded     = uuencode(subsetBytes);
 
     // Build the ASS [Fonts] header line: fontname:<name>_<B><I>0.ttf
     const bTag = weight > 400 ? "B" : "";
     const iTag = italic ? "I" : "";
     const header = `fontname:${fontName}_${bTag}${iTag}0.ttf\n`;
 
-    // Filter out characters that are commonly absent from fonts and not worth warning about:
-    // - ASCII control/space (0x00-0x20)
-    // - General Punctuation block (U+2000-U+206F): ⁉ ‼ ⁈ etc.
-    // - Supplemental Punctuation (U+2E00-U+2E7F)
-    // - Various arrows / math operators / box drawing / block elements / geometric shapes
+    // Filter characters commonly absent from fonts and not worth warning about:
+    // ASCII controls, general punctuation, math/arrow/misc symbol blocks.
     const SUPPRESS_RANGES: Array<[number, number]> = [
       [0x0000, 0x001F], // C0 controls
       [0x007F, 0x009F], // DEL + C1 controls
@@ -164,7 +194,7 @@ export async function subsetFont(
     ];
     const isSuppressed = (cp: number) =>
       cp <= 0x20 || SUPPRESS_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi);
-    const reportedMissing = missing.filter(c => !isSuppressed(c.codePointAt(0)!));
+    const reportedMissing = extracted.missing.filter(c => !isSuppressed(c.codePointAt(0)!));
 
     return {
       encoded: header + encoded + "\n",

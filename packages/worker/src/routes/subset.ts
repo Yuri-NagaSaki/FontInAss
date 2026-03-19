@@ -56,7 +56,7 @@ subset.post("/", async (c) => {
       for (const f of files) {
         if (typeof f !== "string" && "arrayBuffer" in f) {
           const file = f as File;
-          if (file.size > 20 * 1024 * 1024) {
+          if (file.size > 60 * 1024 * 1024) {
             return sendResult(c, CODE.CLIENT_ERROR, [`File "${file.name}" too large (max 20 MB)`], null);
           }
           fileEntries.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
@@ -65,7 +65,7 @@ subset.post("/", async (c) => {
     } else {
       // Single file
       const rawBytes = new Uint8Array(await c.req.arrayBuffer());
-      if (rawBytes.length > 20 * 1024 * 1024) {
+      if (rawBytes.length > 60 * 1024 * 1024) {
         return sendResult(c, CODE.CLIENT_ERROR, ["Subtitle file too large (max 20 MB)"], null);
       }
       const filenameRaw = c.req.header("x-filename") ?? "";

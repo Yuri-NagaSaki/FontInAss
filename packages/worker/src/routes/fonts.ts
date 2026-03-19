@@ -81,17 +81,20 @@ fonts.get("/browse", async (c) => {
     return FONT_EXTS.has(ext);
   });
 
-  // Batch-check which objects are already indexed in D1
+  // Batch-check which objects are already indexed in D1.
+  // SQLite has a max ~999 bound variables per statement; chunk to stay safe.
   let indexedSet = new Set<string>();
   if (fontObjects.length > 0) {
     const keys = fontObjects.map((o) => o.key);
-    const placeholders = keys.map(() => "?").join(",");
-    const indexed = await c.env.DB.prepare(
-      `SELECT r2_key FROM font_files WHERE r2_key IN (${placeholders})`
-    )
-      .bind(...keys)
-      .all<{ r2_key: string }>();
-    indexedSet = new Set((indexed.results ?? []).map((r) => r.r2_key));
+    const CHUNK = 500;
+    for (let i = 0; i < keys.length; i += CHUNK) {
+      const chunk = keys.slice(i, i + CHUNK);
+      const placeholders = chunk.map(() => "?").join(",");
+      const res = await c.env.DB.prepare(
+        `SELECT r2_key FROM font_files WHERE r2_key IN (${placeholders})`
+      ).bind(...chunk).all<{ r2_key: string }>();
+      for (const row of res.results ?? []) indexedSet.add(row.r2_key);
+    }
   }
 
   return c.json({
@@ -378,6 +381,10 @@ fonts.delete("/", async (c) => {
   const { ids } = body;
   if (!Array.isArray(ids) || ids.length === 0) {
     return c.json({ error: "ids must be a non-empty array" }, 400);
+  }
+  // Guard: batch delete capped at 500 to stay under D1's 999-variable limit
+  if (ids.length > 500) {
+    return c.json({ error: "Too many ids; max 500 per request" }, 400);
   }
 
   const placeholders = ids.map(() => "?").join(",");

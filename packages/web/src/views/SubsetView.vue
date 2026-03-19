@@ -120,12 +120,23 @@ const addFiles = async (fileList: FileList | File[]) => {
   await runWithConcurrency(entries.map(e => () => processFile(e)));
 };
 
+// ─── Inline button states ─────────────────────────────────────────────────────
+const retryState = ref<"idle" | "running" | "done">("idle");
+const retryHint  = ref("");
+
 const retryFailed = async () => {
   const failed = files.value.filter(f => f.code === null || f.code >= 300);
-  if (failed.length === 0) { toast.info(t("noFailed")); return; }
+  if (failed.length === 0) {
+    retryHint.value = t("noFailed");
+    setTimeout(() => { retryHint.value = ""; }, 2200);
+    return;
+  }
+  retryState.value = "running";
+  retryHint.value  = "";
   failed.forEach(f => { f.status = t("statusRetrying"); });
   await runWithConcurrency(failed.map(e => () => processFile(e)));
-  toast.success(t("retryDone"));
+  retryState.value = "done";
+  setTimeout(() => { retryState.value = "idle"; }, 1600);
 };
 
 const removeFile = (key: string) => { files.value = files.value.filter(f => f.key !== key); };
@@ -137,7 +148,7 @@ const hasFailed = computed(() => files.value.some(f => f.code === null || f.code
 
 const downloadAll = async () => {
   const ready = files.value.filter(f => f.resultBytes);
-  if (ready.length === 0) { toast.warning(t("noDownloadable")); return; }
+  if (ready.length === 0) return; // button is only shown when canDownload is true
   if (ready.length === 1 && !settings.EXTRACT_FONTS) {
     const f = ready[0];
     saveAs(new Blob([f.resultBytes!.buffer as ArrayBuffer]), f.name.replace(/\.(ass|ssa|srt)$/i, ".subset.ass"));
@@ -186,9 +197,20 @@ onBeforeUnmount(() => {
 });
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const copyMsg = (text: string) => {
-  if (copy(text)) toast.success(t("copied"));
-  else toast.error(t("copyFail"));
+
+// Track recently-copied keys for inline chip feedback (no toast needed)
+const copiedKeys = ref(new Set<string>());
+
+const copyMsg = (text: string, key?: string) => {
+  if (!copy(text)) { toast.error(t("copyFail")); return; }
+  if (key) {
+    copiedKeys.value = new Set([...copiedKeys.value, key]);
+    setTimeout(() => {
+      const next = new Set(copiedKeys.value);
+      next.delete(key);
+      copiedKeys.value = next;
+    }, 1500);
+  }
 };
 
 const statusBadge = (entry: FileEntry): "loading" | "success" | "warning" | "error" => {
@@ -306,8 +328,25 @@ const summaryText = (entry: FileEntry) => {
       </div>
       <div class="flex-1" />
       <div class="flex items-center gap-2">
-        <KButton v-if="hasFailed" variant="secondary" size="sm" @click="retryFailed">
-          <RotateCcw class="w-3.5 h-3.5" />{{ t("retryFailed") }}
+        <Transition name="fade">
+          <span v-if="retryHint" class="text-xs text-ink-400 select-none">{{ retryHint }}</span>
+        </Transition>
+        <KButton
+          v-if="hasFailed || retryState !== 'idle'"
+          variant="secondary"
+          size="sm"
+          :disabled="retryState === 'running'"
+          @click="retryFailed"
+        >
+          <Transition name="chip-icon" mode="out-in">
+            <CheckCircle2 v-if="retryState === 'done'" key="done" class="w-3.5 h-3.5 text-mint-500" />
+            <Loader2 v-else-if="retryState === 'running'" key="run" class="w-3.5 h-3.5 animate-spin-slow" />
+            <RotateCcw v-else key="idle" class="w-3.5 h-3.5" />
+          </Transition>
+          <Transition name="chip-text" mode="out-in">
+            <span v-if="retryState === 'done'" key="done-lbl">{{ locale.startsWith("zh") ? "重试完成" : "Retried!" }}</span>
+            <span v-else key="idle-lbl">{{ t("retryFailed") }}</span>
+          </Transition>
         </KButton>
         <KButton v-if="canDownload" variant="primary" size="sm" @click="downloadAll">
           <Download class="w-3.5 h-3.5" />{{ t("downloadAll") }}
@@ -402,23 +441,33 @@ const summaryText = (entry: FileEntry) => {
             <div v-if="expandedMessages.has(entry.key)" class="px-4 pb-3 animate-fade-in">
               <!-- Missing fonts grid -->
               <div v-if="missingFontCount(entry) > 0" class="mb-2">
-                <p class="text-[11px] text-ink-400 mb-2 font-medium uppercase tracking-wider">
-                  {{ locale.startsWith('zh') ? '缺少字体' : 'Missing Fonts' }}
+                <p class="text-[11px] text-ink-400 mb-2 font-medium uppercase tracking-wider flex items-center gap-1.5">
+                  <XCircle class="w-3 h-3 text-rose-400" />
+                  {{ locale.startsWith('zh') ? '缺少字体 — 点击复制名称' : 'Missing Fonts — click to copy' }}
                 </p>
                 <div class="flex flex-wrap gap-1.5">
-                  <span
+                  <button
                     v-for="pm in parsedMessages(entry).filter(m => m.type === 'missing-font')"
                     :key="pm.fontName"
-                    class="group inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-colors"
-                    :class="entry.code === 300
-                      ? 'bg-rose-100/80 text-rose-700 hover:bg-rose-200/80'
-                      : 'bg-amber-100/80 text-amber-700 hover:bg-amber-200/80'"
-                    @click="copyMsg(pm.fontName!)"
+                    class="group relative inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono border transition-all duration-200 select-none outline-none focus-visible:ring-2 focus-visible:ring-sakura-400/50"
+                    :class="copiedKeys.has(pm.fontName!)
+                      ? 'bg-mint-100 border-mint-300 text-mint-700 scale-95'
+                      : entry.code === 300
+                        ? 'bg-rose-50 border-rose-200 text-rose-700 hover:bg-rose-100 hover:border-rose-300 active:scale-95'
+                        : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100 hover:border-amber-300 active:scale-95'"
+                    @click="copyMsg(pm.fontName!, pm.fontName!)"
                   >
-                    <XCircle class="w-3 h-3 shrink-0 opacity-50" />
-                    {{ pm.fontName }}
-                    <Copy class="w-3 h-3 shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" />
-                  </span>
+                    <Transition name="chip-icon" mode="out-in">
+                      <CheckCircle2 v-if="copiedKeys.has(pm.fontName!)" key="check" class="w-3 h-3 shrink-0 text-mint-500" />
+                      <XCircle v-else key="x" class="w-3 h-3 shrink-0 opacity-40" />
+                    </Transition>
+                    <Transition name="chip-text" mode="out-in">
+                      <span v-if="copiedKeys.has(pm.fontName!)" key="copied" class="text-mint-600 font-medium">
+                        {{ locale.startsWith('zh') ? '已复制' : 'Copied!' }}
+                      </span>
+                      <span v-else key="name">{{ pm.fontName }}</span>
+                    </Transition>
+                  </button>
                 </div>
               </div>
               <!-- Other messages -->
@@ -435,8 +484,15 @@ const summaryText = (entry: FileEntry) => {
                   }"
                 >
                   <span class="flex-1 break-all">{{ pm.raw }}</span>
-                  <button class="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-ink-400 hover:text-ink-700" @click="copyMsg(pm.raw)">
-                    <Copy class="w-3.5 h-3.5" />
+                  <button
+                    class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-sans font-medium transition-all duration-150 outline-none"
+                    :class="copiedKeys.has(`msg-${i}-${entry.key}`)
+                      ? 'bg-mint-100 text-mint-600'
+                      : 'opacity-0 group-hover:opacity-100 bg-black/5 text-ink-400 hover:text-ink-700 hover:bg-black/10'"
+                    @click="copyMsg(pm.raw, `msg-${i}-${entry.key}`)"
+                  >
+                    <span v-if="copiedKeys.has(`msg-${i}-${entry.key}`)">✓</span>
+                    <Copy v-else class="w-3 h-3" />
                   </button>
                 </div>
               </div>
@@ -460,4 +516,15 @@ const summaryText = (entry: FileEntry) => {
 .fade-enter-active { transition: opacity 0.15s; }
 .fade-leave-active { transition: opacity 0.1s; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+/* Chip icon/text swap animation */
+.chip-icon-enter-active,
+.chip-icon-leave-active { transition: opacity 0.15s, transform 0.15s; }
+.chip-icon-enter-from   { opacity: 0; transform: scale(0.6) rotate(-20deg); }
+.chip-icon-leave-to     { opacity: 0; transform: scale(0.6) rotate(20deg); }
+
+.chip-text-enter-active,
+.chip-text-leave-active { transition: opacity 0.12s, transform 0.12s; }
+.chip-text-enter-from   { opacity: 0; transform: translateY(4px); }
+.chip-text-leave-to     { opacity: 0; transform: translateY(-4px); }
 </style>

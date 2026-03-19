@@ -21,7 +21,7 @@ import KEmpty from "../components/KEmpty.vue";
 import R2NodeRow from "../components/R2NodeRow.vue";
 import { useIndexState } from "../composables/useIndexState";
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 // ── API Key lock ──────────────────────────────────────────────────────────────
 const apiKey = ref(getApiKey());
@@ -142,7 +142,6 @@ const indexSingleFile = async (node: R2Node) => {
   try {
     await indexR2Keys([node.prefix]);
     node.indexed = true;
-    toast.success(`${node.name} ${t("r2Indexed")}`);
     loadFontList();
   } catch (e) {
     toast.error(t("indexFailed"));
@@ -172,9 +171,9 @@ const indexAllUnder = async (prefix: string) => {
     } while (cursor);
 
     if (allKeys.length === 0) {
-      toast.info(t("noFontFiles"));
       prog.active = false;
       prog.phase = "done";
+      prog.total = 0;
       return;
     }
 
@@ -195,7 +194,6 @@ const indexAllUnder = async (prefix: string) => {
       }
     }
 
-    toast.success(t("indexDone", { n: prog.indexed }));
     prog.phase = "done";
     loadFontList();
     loadStats();
@@ -221,6 +219,13 @@ const fontSearch = ref("");
 const fontLoading = ref(false);
 const fontAllLoaded = ref(false);
 const selectedIds = reactive(new Set<string>());
+const deleteNotice = ref("");
+let deleteNoticeTimer = 0;
+const showDeleteNotice = (msg: string) => {
+  clearTimeout(deleteNoticeTimer);
+  deleteNotice.value = msg;
+  deleteNoticeTimer = window.setTimeout(() => { deleteNotice.value = ""; }, 2000);
+};
 
 // Sentinel for infinite scroll
 const sentinel = ref<HTMLElement | null>(null);
@@ -280,7 +285,7 @@ const deleteSelected = async () => {
   const ids = [...selectedIds];
   try {
     await deleteFontsBatch(ids);
-    toast.success(t("deleted") + ` ×${ids.length}`);
+    showDeleteNotice(`×${ids.length} ${t("deleted")}`);
     loadFontList(true);
   } catch (e) {
     toast.error(String(e instanceof Error ? e.message : e));
@@ -290,7 +295,7 @@ const deleteSelected = async () => {
 const deleteSingle = async (id: string) => {
   try {
     await deleteFont(id);
-    toast.success(t("deleted"));
+    showDeleteNotice(t("deleted"));
     loadFontList(true);
   } catch (e) {
     toast.error(String(e instanceof Error ? e.message : e));
@@ -306,23 +311,33 @@ const styleLabel = (f: FontItem) => {
 
 // ── Upload ─────────────────────────────────────────────────────────────────────
 const DEFAULT_UPLOAD_DIR = "CatCat-Fonts/";
-const uploadDir = ref(DEFAULT_UPLOAD_DIR);
-const uploadQueue = ref<{ file: File; status: "pending" | "uploading" | "ok" | "error"; msg?: string }[]>([]);
+const uploadDir       = ref(DEFAULT_UPLOAD_DIR);
+const uploadQueue     = ref<{ file: File; status: "pending" | "uploading" | "ok" | "error"; msg?: string }[]>([]);
 const uploadDragActive = ref(false);
-let uploadDragCounter = 0;
-const uploadRunning = ref(false);
+let   uploadDragCounter = 0;
+const uploadRunning   = ref(false);
+const uploadSummary   = ref<{ ok: number; fail: number } | null>(null);
+const dropErrorMsg    = ref("");
+let   dropErrorTimer  = 0;
 
 const FONT_EXTS = new Set(["ttf", "otf", "ttc", "otc"]);
 const isFont = (f: File) => FONT_EXTS.has(f.name.split(".").pop()?.toLowerCase() ?? "");
 
 const addToQueue = (files: FileList | File[]) => {
   const valid = Array.from(files).filter(isFont);
-  if (!valid.length) { toast.error(t("noFontFiles")); return; }
+  if (!valid.length) {
+    clearTimeout(dropErrorTimer);
+    dropErrorMsg.value = t("noFontFiles");
+    dropErrorTimer = window.setTimeout(() => { dropErrorMsg.value = ""; }, 2500);
+    return;
+  }
+  uploadSummary.value = null;
   uploadQueue.value.push(...valid.map(f => ({ file: f, status: "pending" as const })));
 };
 
 const clearQueue = () => {
   uploadQueue.value = uploadQueue.value.filter(e => e.status === "uploading");
+  uploadSummary.value = null;
 };
 
 const startUpload = async () => {
@@ -346,7 +361,8 @@ const startUpload = async () => {
     }
   }
   uploadRunning.value = false;
-  if (ok > 0) { toast.success(t("uploadDone", { n: ok })); loadFontList(true); }
+  uploadSummary.value = { ok, fail: pending.length - ok };
+  if (ok > 0) loadFontList(true);
 };
 
 const onUploadDragEnter = (e: DragEvent) => { e.preventDefault(); uploadDragCounter++; uploadDragActive.value = true; };
@@ -438,6 +454,11 @@ onBeforeUnmount(() => {
         </div>
         <span class="text-sm text-ink-400">{{ t('fontTotal', { n: fontTotal }) }}</span>
         <div class="flex items-center gap-2">
+          <Transition name="fade">
+            <span v-if="deleteNotice" class="flex items-center gap-1 text-xs font-medium text-mint-600 select-none">
+              <CheckCircle2 class="w-3 h-3" />{{ deleteNotice }}
+            </span>
+          </Transition>
           <KButton v-if="selectedIds.size > 0" variant="danger" size="sm" @click="deleteSelected">
             <Trash2 class="w-3.5 h-3.5" />{{ selectedIds.size }} {{ t('selected') }}
           </KButton>
@@ -566,10 +587,29 @@ onBeforeUnmount(() => {
         <p class="text-xs text-ink-400">{{ t('fontsHint') }}</p>
       </div>
 
+      <!-- Drop error inline -->
+      <Transition name="fade">
+        <div v-if="dropErrorMsg" class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-600">
+          <AlertTriangle class="w-3.5 h-3.5 shrink-0" />
+          {{ dropErrorMsg }}
+        </div>
+      </Transition>
+
       <!-- Queue -->
       <div v-if="uploadQueue.length > 0" class="flex flex-col gap-2">
-        <div class="flex items-center gap-2">
-          <span class="text-sm text-ink-500">{{ uploadQueue.length }} {{ t('files', uploadQueue.length) }}</span>
+        <div class="flex items-center gap-2 min-h-[32px]">
+          <!-- Summary (after upload completes) -->
+          <Transition name="chip-text" mode="out-in">
+            <span v-if="uploadSummary" key="summary" class="flex items-center gap-1.5 text-sm font-medium"
+              :class="uploadSummary.fail > 0 ? 'text-amber-600' : 'text-mint-600'">
+              <CheckCircle2 class="w-3.5 h-3.5 shrink-0" />
+              {{ uploadSummary.ok }} {{ locale.startsWith('zh') ? '个已上传' : 'uploaded' }}
+              <template v-if="uploadSummary.fail > 0">
+                · <span class="text-rose-500">{{ uploadSummary.fail }} {{ locale.startsWith('zh') ? '失败' : 'failed' }}</span>
+              </template>
+            </span>
+            <span v-else key="count" class="text-sm text-ink-500">{{ uploadQueue.length }} {{ t('files', uploadQueue.length) }}</span>
+          </Transition>
           <div class="flex-1" />
           <KButton variant="primary" size="sm" :disabled="uploadRunning" @click="startUpload">
             <Upload class="w-3.5 h-3.5" />

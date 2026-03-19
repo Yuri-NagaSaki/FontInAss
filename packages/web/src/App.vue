@@ -2,8 +2,8 @@
 import { ref, computed, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter, useRoute } from "vue-router";
-import { KeyRound, Globe, Cherry, Settings2, ChevronDown, Menu, X } from "lucide-vue-next";
-import { Toaster, toast } from "vue-sonner";
+import { KeyRound, Globe, Cherry, Settings2, ChevronDown, Menu, X, CheckCircle2 } from "lucide-vue-next";
+import { Toaster } from "vue-sonner";
 import KButton from "./components/KButton.vue";
 import KInput from "./components/KInput.vue";
 import { getApiKey, setApiKey, clearApiKey } from "./api/client";
@@ -31,17 +31,18 @@ const toggleLang = () => {
 
 // ─── API Key modal ────────────────────────────────────────────────────────────
 const keyModalOpen = ref(false);
-const keyInput = ref(getApiKey());
-const hasKey = computed(() => !!getApiKey());
+const keyInput     = ref(getApiKey());
+const hasKey       = computed(() => !!getApiKey());
+const keySaved     = ref(false);
 
-const openKeyModal = () => { keyInput.value = getApiKey(); keyModalOpen.value = true; };
+const openKeyModal  = () => { keyInput.value = getApiKey(); keyModalOpen.value = true; keySaved.value = false; };
 const closeKeyModal = () => { keyModalOpen.value = false; };
 
 const saveKey = () => {
   const k = keyInput.value.trim();
   setApiKey(k);
-  closeKeyModal();
-  toast.success(t("apiKeySaved"));
+  keySaved.value = true;
+  setTimeout(() => { keySaved.value = false; closeKeyModal(); }, 900);
 };
 
 const removeKey = () => {
@@ -51,8 +52,9 @@ const removeKey = () => {
 };
 
 // ─── Settings popover ─────────────────────────────────────────────────────────
-const settingsOpen = ref(false);
-const mobileMenuOpen = ref(false);
+const settingsOpen     = ref(false);
+const mobileMenuOpen   = ref(false);
+const settingsSavedAck = ref(false);
 
 // Close mobile menu on route change
 router.afterEach(() => { mobileMenuOpen.value = false; settingsOpen.value = false; });
@@ -76,8 +78,8 @@ const settings = ref({
 
 const saveSettings = () => {
   localStorage.setItem("fontinass_settings", JSON.stringify(settings.value));
-  settingsOpen.value = false;
-  toast.success(t("settingsSaved"));
+  settingsSavedAck.value = true;
+  setTimeout(() => { settingsSavedAck.value = false; settingsOpen.value = false; }, 900);
 };
 
 const toggleSetting = (key: keyof typeof settings.value) => {
@@ -99,7 +101,7 @@ watchEffect(() => {
 <template>
   <!-- Global toast provider -->
   <Toaster
-    position="top-right"
+    position="bottom-right"
     :toastOptions="{
       style: {
         fontFamily: 'var(--font-body)',
@@ -216,7 +218,13 @@ watchEffect(() => {
               </div>
 
               <div class="flex gap-2">
-                <KButton variant="primary" size="sm" class="flex-1" @click="saveSettings">{{ t('save') }}</KButton>
+                <KButton variant="primary" size="sm" class="flex-1" @click="saveSettings">
+                  <Transition name="chip-icon" mode="out-in">
+                    <CheckCircle2 v-if="settingsSavedAck" key="ok" class="w-3.5 h-3.5 text-white" />
+                    <span v-else key="icon" />
+                  </Transition>
+                  {{ settingsSavedAck ? (locale === 'zh-CN' ? '已保存' : 'Saved!') : t('save') }}
+                </KButton>
                 <KButton variant="ghost" size="sm" @click="settingsOpen = false">{{ t('cancel') }}</KButton>
               </div>
             </div>
@@ -341,7 +349,13 @@ watchEffect(() => {
         <p class="text-sm text-ink-400 mb-5 leading-relaxed">{{ t('apiKeyDesc') }}</p>
         <KInput v-model="keyInput" type="password" :placeholder="t('apiKeyPlaceholder')" class="mb-4" @enter="saveKey" />
         <div class="flex items-center gap-2">
-          <KButton variant="primary" size="md" class="flex-1" @click="saveKey">{{ t('apiKeySave') }}</KButton>
+          <KButton variant="primary" size="md" class="flex-1" @click="saveKey">
+            <Transition name="chip-icon" mode="out-in">
+              <CheckCircle2 v-if="keySaved" key="ok" class="w-4 h-4 text-white" />
+              <span v-else key="icon" />
+            </Transition>
+            {{ keySaved ? (locale === 'zh-CN' ? '已保存' : 'Saved!') : t('apiKeySave') }}
+          </KButton>
           <KButton variant="ghost" size="md" @click="closeKeyModal">{{ t('cancel') }}</KButton>
           <KButton v-if="hasKey" variant="danger" size="icon" @click="removeKey" title="Clear key">×</KButton>
         </div>
@@ -415,7 +429,13 @@ watchEffect(() => {
           </div>
         </div>
         <div class="flex gap-2">
-          <KButton variant="primary" size="sm" class="flex-1" @click="saveSettings">{{ t('save') }}</KButton>
+          <KButton variant="primary" size="sm" class="flex-1" @click="saveSettings">
+            <Transition name="chip-icon" mode="out-in">
+              <CheckCircle2 v-if="settingsSavedAck" key="ok" class="w-3.5 h-3.5 text-white" />
+              <span v-else key="icon" />
+            </Transition>
+            {{ settingsSavedAck ? (locale === 'zh-CN' ? '已保存' : 'Saved!') : t('save') }}
+          </KButton>
           <KButton variant="ghost" size="sm" @click="settingsOpen = false">{{ t('cancel') }}</KButton>
         </div>
       </div>
