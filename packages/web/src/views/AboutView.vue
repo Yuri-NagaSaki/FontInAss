@@ -123,7 +123,7 @@ const { t } = useI18n();
               rel="noopener"
               class="group flex items-center gap-3 p-3 rounded-xl hover:bg-ink-50 transition-colors duration-150"
             >
-              <div class="w-8 h-8 rounded-lg bg-mint-50 flex items-center justify-center shrink-0 text-base font-bold text-mint-600">A</div>
+              <img src="https://anibt.net/favicon-32x32.png" alt="AniBT" class="w-8 h-8 rounded-lg shrink-0 object-contain" />
               <div class="min-w-0 flex-1">
                 <p class="text-sm font-medium text-ink-800">AniBT</p>
                 <p class="text-xs text-ink-400 font-mono truncate">anibt.net</p>
@@ -155,9 +155,9 @@ const { t } = useI18n();
               rel="noopener"
               class="group flex items-center gap-3 p-3 rounded-xl hover:bg-ink-50 transition-colors duration-150"
             >
-              <div class="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center shrink-0 text-base font-bold text-amber-500">C</div>
+              <img src="https://catcat.blog/favicon/favicon.ico" alt="猫猫博客" class="w-8 h-8 rounded-lg shrink-0 object-contain" />
               <div class="min-w-0 flex-1">
-                <p class="text-sm font-medium text-ink-800">CatCat Blog</p>
+                <p class="text-sm font-medium text-ink-800">猫猫博客</p>
                 <p class="text-xs text-ink-400 font-mono truncate">catcat.blog</p>
               </div>
               <ArrowUpRight class="w-3.5 h-3.5 text-ink-300 group-hover:text-ink-500 transition-colors shrink-0" />

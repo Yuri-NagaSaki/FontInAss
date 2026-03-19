@@ -315,8 +315,24 @@ fonts.post("/", async (c) => {
     }
     try {
       const bytes = new Uint8Array(await fileEntry.arrayBuffer());
-      const targetDir = c.req.header("x-target-dir") ?? "";
-      const r2KeyOverride = targetDir ? `${targetDir}${filename}` : undefined;
+
+      // Reject oversized font files before parsing
+      const MAX_FONT_BYTES = 60 * 1024 * 1024; // 60 MB
+      if (bytes.length > MAX_FONT_BYTES) {
+        results.push({ filename, id: "", faces: 0, error: "File too large (max 60 MB)" });
+        continue;
+      }
+
+      // Sanitize X-Target-Dir: strip leading slashes, block parent traversal,
+      // ensure it stays within the expected R2 key namespace.
+      const rawDir = c.req.header("x-target-dir") ?? "";
+      const sanitizedDir = rawDir
+        .replace(/\\/g, "/")           // normalise backslashes
+        .replace(/\.\.+/g, "")         // remove any .. sequences
+        .replace(/^\/+/, "")           // strip leading slashes
+        .replace(/\/{2,}/g, "/");      // collapse double-slashes
+      const r2KeyOverride = sanitizedDir ? `${sanitizedDir}${filename}` : undefined;
+
       results.push(await indexFont(c.env, filename, bytes, r2KeyOverride));
     } catch (e) {
       results.push({

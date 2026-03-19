@@ -34,7 +34,7 @@ function base64Encode(str: string): string {
 }
 
 function base64Decode(b64: string): string {
-  return decodeURIComponent(escape(atob(b64)));
+  return new TextDecoder().decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────

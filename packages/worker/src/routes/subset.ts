@@ -56,17 +56,25 @@ subset.post("/", async (c) => {
       for (const f of files) {
         if (typeof f !== "string" && "arrayBuffer" in f) {
           const file = f as File;
+          if (file.size > 20 * 1024 * 1024) {
+            return sendResult(c, CODE.CLIENT_ERROR, [`File "${file.name}" too large (max 20 MB)`], null);
+          }
           fileEntries.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
         }
       }
     } else {
       // Single file
       const rawBytes = new Uint8Array(await c.req.arrayBuffer());
+      if (rawBytes.length > 20 * 1024 * 1024) {
+        return sendResult(c, CODE.CLIENT_ERROR, ["Subtitle file too large (max 20 MB)"], null);
+      }
       const filenameRaw = c.req.header("x-filename") ?? "";
       let filename = "subtitle.ass";
       if (filenameRaw) {
         try {
-          filename = decodeURIComponent(escape(atob(filenameRaw)));
+          filename = new TextDecoder().decode(
+            Uint8Array.from(atob(filenameRaw), ch => ch.charCodeAt(0))
+          );
         } catch {
           filename = filenameRaw;
         }
@@ -188,13 +196,16 @@ async function processSubtitle(
   }
 
   // Handle existing [Fonts] section
+  // checkFontsSection: 0=none, 1=empty section, 2=has embedded font data
   const fontStatus = checkFontsSection(text);
-  if (fontStatus === 1) {
+  if (fontStatus === 2) {
+    // Section has real embedded fonts — require explicit opt-in to clear
     if (!opts.clearFonts) {
       return { code: CODE.CLIENT_ERROR, messages: ["Subtitle already has embedded fonts. Enable 'clear fonts' to re-process."], data: null };
     }
     text = removeSection(text, "Fonts");
-  } else if (fontStatus === 2) {
+  } else if (fontStatus === 1) {
+    // Empty [Fonts] section — safe to remove silently
     text = removeSection(text, "Fonts");
   }
 
@@ -327,7 +338,7 @@ function sendResult(
   data: Uint8Array | null,
 ) {
   const msgHeader = messages
-    ? btoa(unescape(encodeURIComponent(JSON.stringify(messages))))
+    ? btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(messages))))
     : "";
 
   return new Response(data ? data.buffer as ArrayBuffer : new ArrayBuffer(0), {

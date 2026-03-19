@@ -198,11 +198,17 @@ function isTTC(data: Uint8Array): boolean {
  */
 function extractTTCFace(ttcBuf: ArrayBuffer, faceIndex: number): ArrayBuffer {
   const view = new DataView(ttcBuf);
+
   const numFonts = view.getUint32(8, false);
-  const faceOffset = view.getUint32(12 + Math.min(faceIndex, numFonts - 1) * 4, false);
+  if (numFonts === 0 || numFonts > 256) throw new Error(`Invalid TTC: numFonts=${numFonts}`);
+
+  const safeIndex = Math.min(faceIndex, numFonts - 1);
+  const faceOffset = view.getUint32(12 + safeIndex * 4, false);
+  if (faceOffset >= ttcBuf.byteLength) throw new Error("Invalid TTC: faceOffset out of bounds");
 
   // OffsetTable at faceOffset: sfVersion(4) numTables(2) searchRange(2) entrySelector(2) rangeShift(2)
   const numTables = view.getUint16(faceOffset + 4, false);
+  if (numTables === 0 || numTables > 128) throw new Error(`Invalid font: numTables=${numTables}`);
   const sfVersion = view.getUint32(faceOffset, false);
 
   // Read TableDirectory entries (each 16 bytes: tag checksum offset length)
@@ -210,11 +216,14 @@ function extractTTCFace(ttcBuf: ArrayBuffer, faceIndex: number): ArrayBuffer {
   const tables: TableRec[] = [];
   for (let i = 0; i < numTables; i++) {
     const r = faceOffset + 12 + i * 16;
+    if (r + 16 > ttcBuf.byteLength) throw new Error("Invalid font: table directory truncated");
+    const length = view.getUint32(r + 12, false);
+    if (length > 60 * 1024 * 1024) throw new Error("Invalid font: table too large");
     tables.push({
       tag: String.fromCharCode(view.getUint8(r), view.getUint8(r+1), view.getUint8(r+2), view.getUint8(r+3)),
       checksum: view.getUint32(r + 4, false),
       offset:   view.getUint32(r + 8, false), // TTC-absolute offset
-      length:   view.getUint32(r + 12, false),
+      length,
     });
   }
 
@@ -226,6 +235,7 @@ function extractTTCFace(ttcBuf: ArrayBuffer, faceIndex: number): ArrayBuffer {
   for (const t of tables) {
     newOffsets.push(cursor);
     cursor += (t.length + 3) & ~3; // align to 4 bytes
+    if (cursor > 80 * 1024 * 1024) throw new Error("Invalid font: reconstructed TTF too large");
   }
 
   const result = new ArrayBuffer(cursor);
@@ -250,7 +260,8 @@ function extractTTCFace(ttcBuf: ArrayBuffer, faceIndex: number): ArrayBuffer {
     outView.setUint32(r + 8, newOffsets[i], false);
     outView.setUint32(r + 12, t.length, false);
     // Copy table data from TTC-absolute position
-    out.set(src.subarray(t.offset, t.offset + t.length), newOffsets[i]);
+    const end = Math.min(t.offset + t.length, src.length);
+    out.set(src.subarray(t.offset, end), newOffsets[i]);
   }
 
   return result;
