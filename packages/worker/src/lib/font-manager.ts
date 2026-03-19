@@ -12,9 +12,86 @@ export interface FontLookupResult {
   italic: boolean;
 }
 
+type FontRow = {
+  name_lower: string;
+  font_index: number;
+  weight: number;
+  bold: number;
+  italic: number;
+  r2_key: string;
+};
+
+/** Pick the best matching variant from a group of DB rows for one font name. */
+function pickBest(
+  variants: FontRow[],
+  targetWeight: number,
+  targetItalic: boolean,
+): FontLookupResult {
+  const targetBold = targetWeight >= 600 ? 1 : 0;
+  const italicInt = targetItalic ? 1 : 0;
+
+  // Exact match first
+  const exact = variants.find(v => v.bold === targetBold && v.italic === italicInt);
+  const best = exact ?? [...variants].sort((a, b) => {
+    const score = (v: FontRow) =>
+      Math.abs(v.bold - targetBold) * 200 +
+      Math.abs(v.italic - italicInt) * 100 +
+      Math.abs(v.weight - targetWeight);
+    return score(a) - score(b);
+  })[0];
+
+  return {
+    r2Key: best.r2_key,
+    fontIndex: best.font_index,
+    weight: best.weight,
+    italic: best.italic === 1,
+  };
+}
+
 /**
- * Find a font in D1 by name, weight, and italic, returning R2 key and face index.
- * Uses case-insensitive name lookup and fuzzy weight/style fallback.
+ * Batch-lookup fonts in D1 — single query for all needed names.
+ * Keys in the returned map match the input keys array (index-aligned).
+ * Each entry is `nameLower|weightStr|italicInt` for deduplication.
+ */
+export async function lookupFontsBatch(
+  env: Env,
+  requests: Array<{ key: string; nameLower: string; targetWeight: number; targetItalic: boolean }>,
+): Promise<Map<string, FontLookupResult | null>> {
+  const resultMap = new Map<string, FontLookupResult | null>();
+  if (requests.length === 0) return resultMap;
+
+  const uniqueNames = [...new Set(requests.map(r => r.nameLower))];
+  const placeholders = uniqueNames.map(() => "?").join(",");
+
+  const { results } = await env.DB.prepare(`
+    SELECT fn.name_lower, fi.font_index, fi.weight, fi.bold, fi.italic, ff.r2_key
+    FROM font_names fn
+    JOIN font_info fi ON fn.font_info_id = fi.id
+    JOIN font_files ff ON fi.file_id = ff.id
+    WHERE fn.name_lower IN (${placeholders})
+  `).bind(...uniqueNames).all<FontRow>();
+
+  // Group by name_lower
+  const byName = new Map<string, FontRow[]>();
+  for (const row of results) {
+    const arr = byName.get(row.name_lower) ?? [];
+    arr.push(row);
+    byName.set(row.name_lower, arr);
+  }
+
+  for (const req of requests) {
+    const variants = byName.get(req.nameLower);
+    resultMap.set(req.key, variants?.length
+      ? pickBest(variants, req.targetWeight, req.targetItalic)
+      : null,
+    );
+  }
+
+  return resultMap;
+}
+
+/**
+ * Single-font lookup kept for compatibility (fonts route still uses it).
  */
 export async function lookupFont(
   env: Env,
@@ -22,70 +99,43 @@ export async function lookupFont(
   targetWeight: number,
   targetItalic: boolean,
 ): Promise<FontLookupResult | null> {
-  const nameLower = fontName.trim().toLowerCase();
-  const targetBold = targetWeight >= 600 ? 1 : 0;
-  const italicInt = targetItalic ? 1 : 0;
-
-  // Exact match: name + bold + italic
-  const exactResult = await env.DB.prepare(`
-    SELECT fi.id, fi.font_index, fi.weight, fi.bold, fi.italic, ff.r2_key
-    FROM font_names fn
-    JOIN font_info fi ON fn.font_info_id = fi.id
-    JOIN font_files ff ON fi.file_id = ff.id
-    WHERE fn.name_lower = ?
-      AND fi.bold = ?
-      AND fi.italic = ?
-    LIMIT 1
-  `).bind(nameLower, targetBold, italicInt).first<{
-    id: string; font_index: number; weight: number;
-    bold: number; italic: number; r2_key: string;
-  }>();
-
-  if (exactResult) {
-    return {
-      r2Key: exactResult.r2_key,
-      fontIndex: exactResult.font_index,
-      weight: exactResult.weight,
-      italic: exactResult.italic === 1,
-    };
-  }
-
-  // Fuzzy fallback: any variant of the same family
-  const fuzzyResult = await env.DB.prepare(`
-    SELECT fi.id, fi.font_index, fi.weight, fi.bold, fi.italic, ff.r2_key
-    FROM font_names fn
-    JOIN font_info fi ON fn.font_info_id = fi.id
-    JOIN font_files ff ON fi.file_id = ff.id
-    WHERE fn.name_lower = ?
-    ORDER BY
-      ABS(fi.bold - ?) ASC,
-      ABS(fi.italic - ?) ASC,
-      ABS(fi.weight - ?) ASC
-    LIMIT 1
-  `).bind(nameLower, targetBold, italicInt, targetWeight).first<{
-    id: string; font_index: number; weight: number;
-    bold: number; italic: number; r2_key: string;
-  }>();
-
-  if (fuzzyResult) {
-    return {
-      r2Key: fuzzyResult.r2_key,
-      fontIndex: fuzzyResult.font_index,
-      weight: fuzzyResult.weight,
-      italic: fuzzyResult.italic === 1,
-    };
-  }
-
-  return null;
+  const m = await lookupFontsBatch(env, [{
+    key: "single",
+    nameLower: fontName.trim().toLowerCase(),
+    targetWeight,
+    targetItalic,
+  }]);
+  return m.get("single") ?? null;
 }
 
+/** Internal cache URL prefix — any valid HTTPS URL works as a CF Cache API key. */
+const FONT_CACHE_BASE = "https://fontinass-font-bytes-v1.internal/";
+
 /**
- * Load raw font bytes from R2.
+ * Load raw font bytes from R2, backed by the Workers Cache API.
+ * Warm cache hit: ~0ms (edge memory). Cold miss: R2 read + async cache populate.
  */
 export async function loadFontBytes(env: Env, r2Key: string): Promise<Uint8Array | null> {
+  const cacheUrl = FONT_CACHE_BASE + encodeURIComponent(r2Key);
+  const cacheReq = new Request(cacheUrl);
+
+  // Try Cache API first
+  const cached = await caches.default.match(cacheReq);
+  if (cached) {
+    return new Uint8Array(await cached.arrayBuffer());
+  }
+
+  // Miss — read from R2
   const obj = await env.FONTS_BUCKET.get(r2Key);
   if (!obj) return null;
   const buf = await obj.arrayBuffer();
+
+  // Populate cache asynchronously (don't block response)
+  const cacheResp = new Response(buf.slice(0), {
+    headers: { "Cache-Control": "public, max-age=604800" },
+  });
+  caches.default.put(cacheReq, cacheResp).catch(() => {});
+
   return new Uint8Array(buf);
 }
 

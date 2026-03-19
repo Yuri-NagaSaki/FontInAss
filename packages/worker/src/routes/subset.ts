@@ -31,7 +31,7 @@ import {
   removeSection,
   checkFontsSection,
 } from "../lib/ass-parser.js";
-import { lookupFont, loadFontBytes } from "../lib/font-manager.js";
+import { lookupFontsBatch, loadFontBytes, type FontLookupResult } from "../lib/font-manager.js";
 import { subsetFont } from "../lib/subsetter.js";
 import { computeCacheKey, getFromCache, setInCache } from "../lib/cache.js";
 
@@ -49,41 +49,56 @@ subset.post("/", async (c) => {
   // Support both single-file (octet-stream) and batch (multipart) uploads
   const fileEntries: { name: string; bytes: Uint8Array }[] = [];
 
-  if (contentType.includes("multipart/form-data")) {
-    const form = await c.req.formData();
-    const files = form.getAll("file");
-    for (const f of files) {
-      if (typeof f !== "string" && "arrayBuffer" in f) {
-        const file = f as File;
-        fileEntries.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+  try {
+    if (contentType.includes("multipart/form-data")) {
+      const form = await c.req.formData();
+      const files = form.getAll("file");
+      for (const f of files) {
+        if (typeof f !== "string" && "arrayBuffer" in f) {
+          const file = f as File;
+          fileEntries.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+        }
       }
-    }
-  } else {
-    // Single file
-    const rawBytes = new Uint8Array(await c.req.arrayBuffer());
-    const filenameRaw = c.req.header("x-filename") ?? "";
-    let filename = "subtitle.ass";
-    if (filenameRaw) {
-      try {
-        filename = decodeURIComponent(escape(atob(filenameRaw)));
-      } catch {
-        filename = filenameRaw;
+    } else {
+      // Single file
+      const rawBytes = new Uint8Array(await c.req.arrayBuffer());
+      const filenameRaw = c.req.header("x-filename") ?? "";
+      let filename = "subtitle.ass";
+      if (filenameRaw) {
+        try {
+          filename = decodeURIComponent(escape(atob(filenameRaw)));
+        } catch {
+          filename = filenameRaw;
+        }
       }
+      fileEntries.push({ name: filename, bytes: rawBytes });
     }
-    fileEntries.push({ name: filename, bytes: rawBytes });
+  } catch (e) {
+    return sendResult(c, CODE.SERVER, [`Failed to read request: ${e instanceof Error ? e.message : String(e)}`], null);
   }
 
   if (fileEntries.length === 0) {
     return sendResult(c, CODE.CLIENT_ERROR, ["No file provided"], null);
   }
 
+  // Limit batch size to prevent memory exhaustion
+  const MAX_BATCH = 20;
+  if (fileEntries.length > MAX_BATCH) {
+    return sendResult(c, CODE.CLIENT_ERROR, [`Batch too large: max ${MAX_BATCH} files per request`], null);
+  }
+
   // For single-file requests, use the classic response format (matching fontInAss)
   if (fileEntries.length === 1) {
     const { bytes } = fileEntries[0];
-    const result = await processSubtitle(c.env, bytes, {
-      fontsCheck, clearFonts, srtFormat, srtStyle,
-    });
-    return sendResult(c, result.code, result.messages, result.data);
+    try {
+      const result = await processSubtitle(c.env, bytes, {
+        fontsCheck, clearFonts, srtFormat, srtStyle,
+      }, c.executionCtx);
+      return sendResult(c, result.code, result.messages, result.data);
+    } catch (e) {
+      console.error("[subset] processSubtitle error:", e);
+      return sendResult(c, CODE.SERVER, [`Server error: ${e instanceof Error ? e.message : String(e)}`], null);
+    }
   }
 
   // Batch: return multipart response
@@ -91,17 +106,27 @@ subset.post("/", async (c) => {
   let anyError = false;
 
   for (const { name, bytes } of fileEntries) {
-    const result = await processSubtitle(c.env, bytes, {
-      fontsCheck, clearFonts, srtFormat, srtStyle,
-    });
-    if (result.code >= 400) anyError = true;
-    // Pack as JSON envelope per file
-    parts.push(JSON.stringify({
-      filename: name,
-      code: result.code,
-      messages: result.messages,
-      data: result.data ? Array.from(result.data) : null,
-    }));
+    try {
+      const result = await processSubtitle(c.env, bytes, {
+        fontsCheck, clearFonts, srtFormat, srtStyle,
+      }, c.executionCtx);
+      if (result.code >= 400) anyError = true;
+      parts.push(JSON.stringify({
+        filename: name,
+        code: result.code,
+        messages: result.messages,
+        data: result.data ? Array.from(result.data) : null,
+      }));
+    } catch (e) {
+      anyError = true;
+      console.error("[subset] batch processSubtitle error:", name, e);
+      parts.push(JSON.stringify({
+        filename: name,
+        code: CODE.SERVER,
+        messages: [`Server error: ${e instanceof Error ? e.message : String(e)}`],
+        data: null,
+      }));
+    }
   }
 
   return c.json({ results: parts.map(p => JSON.parse(p)) }, anyError ? 207 : 200);
@@ -126,18 +151,24 @@ async function processSubtitle(
   env: Env,
   rawBytes: Uint8Array,
   opts: ProcessOptions,
+  ctx?: ExecutionContext,
 ): Promise<ProcessResult> {
   // Cache check
-  const cacheKey = await computeCacheKey(rawBytes, {
-    fontsCheck: opts.fontsCheck,
-    clearFonts: opts.clearFonts,
-    srtFormat: opts.srtFormat,
-    srtStyle: opts.srtStyle,
-  });
-
-  const cached = await getFromCache(env, cacheKey);
-  if (cached) {
-    return { code: CODE.OK, messages: null, data: cached };
+  let cacheKey = "";
+  try {
+    cacheKey = await computeCacheKey(rawBytes, {
+      fontsCheck: opts.fontsCheck,
+      clearFonts: opts.clearFonts,
+      srtFormat: opts.srtFormat,
+      srtStyle: opts.srtStyle,
+    });
+    const cached = await getFromCache(env, cacheKey);
+    if (cached) {
+      return { code: CODE.OK, messages: null, data: cached };
+    }
+  } catch {
+    // Cache errors are non-fatal — continue without cache
+    cacheKey = "";
   }
 
   // Decode subtitle
@@ -175,43 +206,76 @@ async function processSubtitle(
     return { code: CODE.CLIENT_ERROR, messages: ["No fonts referenced in subtitle"], data: null };
   }
 
-  // Strict mode: check all fonts exist before processing
+  // Build batch lookup requests — key = "nameLower|weight|italic"
+  const lookupReqs = fontEntries.map(([key]) => {
+    const [nameLower, weightStr, italicStr] = key.split("|");
+    return {
+      key,
+      nameLower,
+      targetWeight: parseInt(weightStr, 10),
+      targetItalic: italicStr === "1",
+    };
+  });
+
+  // Strict mode: batch check all fonts exist before processing
   if (opts.fontsCheck) {
-    const missing: string[] = [];
-    await Promise.all(
-      fontEntries.map(async ([key]) => {
-        const [nameLower, weightStr, italicStr] = key.split("|");
-        const weight = parseInt(weightStr, 10);
-        const italic = italicStr === "1";
-        const match = await lookupFont(env, nameLower, weight, italic);
-        if (!match) missing.push(nameLower);
-      })
-    );
+    let strictMatchMap: Map<string, FontLookupResult | null>;
+    try {
+      strictMatchMap = await lookupFontsBatch(env, lookupReqs);
+    } catch (e) {
+      return { code: CODE.SERVER, messages: [`Database error during font lookup: ${e instanceof Error ? e.message : String(e)}`], data: null };
+    }
+    const missing = lookupReqs.filter(r => !strictMatchMap.get(r.key)).map(r => r.nameLower);
     if (missing.length > 0) {
       return { code: CODE.MISSING_FONT, messages: missing.map(n => `Missing font: [${n}]`), data: null };
     }
   }
 
-  // Subset all fonts in parallel
-  const subsetResults = await Promise.all(
-    fontEntries.map(async ([key, unicodeSet]) => {
-      const [nameLower, weightStr, italicStr] = key.split("|");
-      const weight = parseInt(weightStr, 10);
-      const italic = italicStr === "1";
+  // Single batch D1 query for all fonts needed in this subtitle
+  let matchMap: Map<string, FontLookupResult | null>;
+  try {
+    matchMap = await lookupFontsBatch(env, lookupReqs);
+  } catch (e) {
+    return { code: CODE.SERVER, messages: [`Database error: ${e instanceof Error ? e.message : String(e)}`], data: null };
+  }
 
-      const match = await lookupFont(env, nameLower, weight, italic);
-      if (!match) {
-        return { encoded: "", error: `Missing font: [${nameLower}]` };
-      }
+  // Per-request font bytes dedup: same r2Key only read once
+  // NOTE: we process fonts sequentially (not Promise.all) to avoid OOM.
+  // CJK fonts are 15-30 MB each; opentype.js parses them into ~50 MB JS objects.
+  // Sequential processing lets V8 GC reclaim each font before the next starts.
+  const bytesCache = new Map<string, Uint8Array | null>();
+  const loadBytes = async (r2Key: string): Promise<Uint8Array | null> => {
+    if (bytesCache.has(r2Key)) return bytesCache.get(r2Key) ?? null;
+    const bytes = await loadFontBytes(env, r2Key);
+    bytesCache.set(r2Key, bytes);
+    return bytes;
+  };
 
-      const fontBytes = await loadFontBytes(env, match.r2Key);
-      if (!fontBytes) {
-        return { encoded: "", error: `Failed to load font from storage: [${nameLower}]` };
-      }
+  // Subset fonts one at a time — sequential to control peak memory
+  const subsetResults: Awaited<ReturnType<typeof subsetFont>>[] = [];
+  for (const [key, unicodeSet] of fontEntries) {
+    const [nameLower, weightStr, italicStr] = key.split("|");
+    const weight = parseInt(weightStr, 10);
+    const italic = italicStr === "1";
 
-      return subsetFont(fontBytes, match.fontIndex, nameLower, weight, italic, unicodeSet);
-    })
-  );
+    const match = matchMap.get(key);
+    if (!match) {
+      subsetResults.push({ encoded: "", missingGlyphs: "", error: `Missing font: [${nameLower}]` });
+      continue;
+    }
+
+    const fontBytes = await loadBytes(match.r2Key);
+    if (!fontBytes) {
+      subsetResults.push({ encoded: "", missingGlyphs: "", error: `Failed to load font from storage: [${nameLower}]` });
+      continue;
+    }
+
+    const result = await subsetFont(fontBytes, match.fontIndex, nameLower, weight, italic, unicodeSet);
+    subsetResults.push(result);
+
+    // Release font bytes from cache after subsetting to allow GC
+    bytesCache.delete(match.r2Key);
+  }
 
   // Build [Fonts] section
   let fontsSection = "[Fonts]\n";
@@ -222,7 +286,7 @@ async function processSubtitle(
       errors.push(res.error);
     } else {
       fontsSection += res.encoded;
-      if ("missingGlyphs" in res && res.missingGlyphs) {
+      if (res.missingGlyphs) {
         errors.push(`Missing glyphs: ${res.missingGlyphs}`);
       }
     }
@@ -238,8 +302,11 @@ async function processSubtitle(
   const resultBytes = new TextEncoder().encode("\uFEFF" + resultText);
 
   // Cache only on full success (no missing fonts/glyphs)
-  if (errors.length === 0) {
-    await setInCache(env, cacheKey, resultBytes).catch(() => { /* non-critical */ });
+  if (errors.length === 0 && cacheKey) {
+    const cacheWrite = setInCache(env, cacheKey, resultBytes).catch(() => {});
+    if (ctx) {
+      ctx.waitUntil(cacheWrite);
+    }
   }
 
   if (errors.length > 0) {

@@ -1,22 +1,32 @@
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from "vue";
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { message } from "ant-design-vue";
-import type { TreeProps } from "ant-design-vue";
+import { toast } from "vue-sonner";
+import {
+  FolderOpen, FileText, Upload, Trash2,
+  RefreshCcw, Search, CheckCircle2, Loader2,
+  KeyRound, Database, CloudUpload, AlertTriangle, X,
+} from "lucide-vue-next";
 import {
   listFonts, uploadFonts, deleteFont, deleteFontsBatch,
-  browseR2, indexR2Folder, indexR2Keys,
+  browseR2, indexR2Keys, listR2Keys, getFontStats,
   getApiKey, setApiKey,
 } from "../api/client";
-import type { FontItem, BrowseFile } from "../api/client";
+import type { FontItem, BrowseFile, FontStats } from "../api/client";
+import KButton from "../components/KButton.vue";
+import KInput from "../components/KInput.vue";
+import KBadge from "../components/KBadge.vue";
+import KSpinner from "../components/KSpinner.vue";
+import KEmpty from "../components/KEmpty.vue";
+import R2NodeRow from "../components/R2NodeRow.vue";
+import { useIndexState } from "../composables/useIndexState";
 
 const { t } = useI18n();
 
-// ─── API Key lock ─────────────────────────────────────────────────────────────
+// ── API Key lock ──────────────────────────────────────────────────────────────
 const apiKey = ref(getApiKey());
 const hasKey = computed(() => !!apiKey.value.trim());
 const lockKeyInput = ref("");
-
 const unlockWithKey = () => {
   const k = lockKeyInput.value.trim();
   if (!k) return;
@@ -24,509 +34,655 @@ const unlockWithKey = () => {
   apiKey.value = k;
   loadRoot();
   loadFontList();
+  loadStats();
 };
 
-// ─── R2 Browser tree ─────────────────────────────────────────────────────────
-
-interface TreeNode {
-  key: string;
-  title: string;
-  isLeaf: boolean;
-  children?: TreeNode[];
-  // custom fields
-  _type: "folder" | "file";
-  _size?: number;
-  _indexed?: boolean;
-  _indexing?: boolean;
+// ── R2 Browser ────────────────────────────────────────────────────────────────
+interface R2Node {
+  prefix: string;   // Full prefix path
+  name: string;     // Display name (last segment)
+  type: "folder" | "file";
+  size?: number;
+  indexed?: boolean;
+  loading?: boolean;
+  expanded?: boolean;
+  children?: R2Node[];
+  cursor?: string | null;     // For pagination inside this folder
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  fileCount?: number;         // Known file count from this level
 }
 
-const treeData = ref<TreeNode[]>([]);
+const r2Tree = ref<R2Node[]>([]);
 const browserLoading = ref(false);
 
-// Per-folder indexing state (kept outside tree so reactivity works cleanly)
-interface FolderIndexState {
-  indexing: boolean;
-  indexed: number;
-  skipped: number;
-  errors: number;
-}
-const folderIndex = reactive<Record<string, FolderIndexState>>({});
+// Per-prefix indexing progress — module singleton (survives navigation)
+const { indexProgress, ensureProgress } = useIndexState();
 
-const buildNodes = (parentPrefix: string, folders: string[], files: BrowseFile[]): TreeNode[] => {
-  const folderNodes: TreeNode[] = folders.map(f => {
-    const name = f.slice(parentPrefix.length).replace(/\/$/, "") || f;
-    if (!folderIndex[f]) folderIndex[f] = { indexing: false, indexed: 0, skipped: 0, errors: 0 };
-    return { key: f, title: name, isLeaf: false, children: [], _type: "folder" };
-  });
-
-  const fileNodes: TreeNode[] = files.map(f => ({
-    key: f.key,
-    title: f.name,
-    isLeaf: true,
-    _type: "file",
-    _size: f.size,
-    _indexed: f.indexed,
-    _indexing: false,
+// Browse a prefix level and build nodes
+const browsePrefix = async (prefix: string): Promise<{ folders: R2Node[]; files: R2Node[]; cursor: string | null; hasMore: boolean }> => {
+  const data = await browseR2(prefix);
+  const folders: R2Node[] = (data.folders ?? []).map((f: string) => ({
+    prefix: f,
+    name: f.replace(prefix, "").replace(/\/$/, "") || f,
+    type: "folder" as const,
+    loading: false,
+    expanded: false,
+    children: undefined,
   }));
-
-  return [...folderNodes, ...fileNodes];
+  const files: R2Node[] = (data.files ?? []).map((f: BrowseFile) => ({
+    prefix: f.key,
+    name: f.name,
+    type: "file" as const,
+    size: f.size,
+    indexed: f.indexed,
+  }));
+  return { folders, files, cursor: data.cursor, hasMore: !data.done };
 };
 
 const loadRoot = async () => {
   browserLoading.value = true;
   try {
-    const res = await browseR2("");
-    treeData.value = buildNodes("", res.folders, res.files);
+    const { folders, files } = await browsePrefix("");
+    r2Tree.value = [...folders, ...files];
   } catch (e) {
-    message.error("R2 browse failed: " + String(e));
+    toast.error(t("browseFailed"));
   } finally {
     browserLoading.value = false;
   }
 };
 
-// Called by AntD Tree when a folder node is expanded
-const loadTreeData: TreeProps["loadData"] = ({ dataRef }: any): Promise<void> => {
-  const node = dataRef as TreeNode;
-  if (node._type !== "folder" || (node.children && node.children.length > 0)) {
-    return Promise.resolve();
+const toggleFolder = async (node: R2Node) => {
+  if (node.type !== "folder") return;
+  if (node.expanded && node.children !== undefined) {
+    node.expanded = false;
+    return;
   }
-  return (async () => {
-    let allFolders: string[] = [];
-    let allFiles: BrowseFile[] = [];
-    let cursor: string | null = null;
+  node.loading = true;
+  node.expanded = true;
+  try {
+    const { folders, files, cursor, hasMore } = await browsePrefix(node.prefix);
+    node.children = [...folders, ...files];
+    node.cursor = cursor;
+    node.hasMore = hasMore;
+    node.fileCount = files.length;
+  } catch {
+    toast.error(t("browseFailed"));
+    node.expanded = false;
+  } finally {
+    node.loading = false;
+  }
+};
+
+const loadMoreInFolder = async (node: R2Node) => {
+  if (!node.cursor || node.loadingMore) return;
+  node.loadingMore = true;
+  try {
+    const data = await browseR2(node.prefix, node.cursor);
+    const moreFiles: R2Node[] = (data.files ?? []).map((f: BrowseFile) => ({
+      prefix: f.key, name: f.name, type: "file" as const,
+      size: f.size, indexed: f.indexed,
+    }));
+    const moreFolders: R2Node[] = (data.folders ?? []).map((f: string) => ({
+      prefix: f,
+      name: f.replace(node.prefix, "").replace(/\/$/, "") || f,
+      type: "folder" as const,
+      loading: false, expanded: false, children: undefined,
+    }));
+    node.children = [...(node.children ?? []), ...moreFolders, ...moreFiles];
+    node.cursor = data.cursor;
+    node.hasMore = !data.done;
+  } finally {
+    node.loadingMore = false;
+  }
+};
+
+const indexSingleFile = async (node: R2Node) => {
+  if (node.type !== "file" || node.indexed) return;
+  try {
+    await indexR2Keys([node.prefix]);
+    node.indexed = true;
+    toast.success(`${node.name} ${t("r2Indexed")}`);
+    loadFontList();
+  } catch (e) {
+    toast.error(t("indexFailed"));
+  }
+};
+
+// Index all fonts under a folder prefix using list-keys + batched index-folder
+const indexAllUnder = async (prefix: string) => {
+  const prog = ensureProgress(prefix);
+  if (prog.active) return;
+  prog.active = true;
+  prog.indexed = 0;
+  prog.skipped = 0;
+  prog.errors = 0;
+  prog.total = 0;
+  prog.phase = "listing";
+
+  try {
+    // Phase 1: enumerate all keys under prefix
+    const allKeys: string[] = [];
+    let cursor: string | undefined;
     do {
-      const res = await browseR2(node.key, cursor ?? undefined);
-      allFolders.push(...res.folders);
-      allFiles.push(...res.files);
-      cursor = res.cursor;
-    } while (cursor);
-    node.children = buildNodes(node.key, allFolders, allFiles);
-  })();
-};
-
-// Refresh indexed status for files under a folder node (after indexing)
-const refreshFolderIndexed = (_nodeKey: string, indexedKeys: Set<string>) => {
-  const walk = (nodes: TreeNode[]) => {
-    for (const n of nodes) {
-      if (n._type === "file" && indexedKeys.has(n.key)) n._indexed = true;
-      if (n.children) walk(n.children);
-    }
-  };
-  walk(treeData.value);
-};
-
-// Index all fonts in a folder (loop until done)
-const doIndexFolder = async (folderKey: string) => {
-  if (!folderIndex[folderKey]) folderIndex[folderKey] = { indexing: false, indexed: 0, skipped: 0, errors: 0 };
-  const state = folderIndex[folderKey];
-  state.indexing = true;
-  state.indexed = 0;
-  state.skipped = 0;
-  state.errors = 0;
-
-  const indexedKeys = new Set<string>();
-  try {
-    let cursor: string | undefined = undefined;
-    let done = false;
-    while (!done) {
-      const res = await indexR2Folder(folderKey, cursor, 5);
-      state.indexed += res.indexed;
-      state.skipped += res.skipped;
-      state.errors += res.errors.length;
-      done = res.done;
+      const res = await listR2Keys(prefix, cursor, 500);
+      allKeys.push(...res.keys.map(k => k.key));
+      prog.total = allKeys.length;
       cursor = res.nextCursor ?? undefined;
+    } while (cursor);
+
+    if (allKeys.length === 0) {
+      toast.info(t("noFontFiles"));
+      prog.active = false;
+      prog.phase = "done";
+      return;
     }
-    message.success(t("indexDone", { n: state.indexed }));
-    refreshFolderIndexed(folderKey, indexedKeys);
-    await loadFontList();
+
+    prog.phase = "indexing";
+    prog.total = allKeys.length;
+
+    // Phase 2: send in batches of 50 to index-folder
+    const BATCH = 50;
+    for (let i = 0; i < allKeys.length; i += BATCH) {
+      const batch = allKeys.slice(i, i + BATCH);
+      try {
+        const res = await indexR2Keys(batch);
+        prog.indexed += res.indexed;
+        prog.skipped += res.skipped;
+        prog.errors += (res.errors ?? []).length;
+      } catch (e) {
+        prog.errors += batch.length;
+      }
+    }
+
+    toast.success(t("indexDone", { n: prog.indexed }));
+    prog.phase = "done";
+    loadFontList();
+    loadStats();
+    // Refresh tree to show indexed status
+    loadRoot();
   } catch (e) {
-    message.error(t("indexFailed") + ": " + String(e));
+    toast.error(t("indexFailed"));
+    prog.phase = "done";
   } finally {
-    state.indexing = false;
+    prog.active = false;
   }
 };
 
-// Index a single file node
-const doIndexFile = async (node: TreeNode) => {
-  node._indexing = true;
-  try {
-    const res = await indexR2Keys([node.key]);
-    if (res.indexed > 0) {
-      node._indexed = true;
-      message.success(t("indexDone", { n: 1 }));
-      await loadFontList();
-    } else if (res.skipped > 0) {
-      node._indexed = true;
-      message.info(t("r2AlreadyIndexed"));
-    } else {
-      message.error(res.errors[0] ?? t("indexFailed"));
-    }
-  } catch (e) {
-    message.error(String(e));
-  } finally {
-    node._indexing = false;
-  }
-};
+const formatBytes = (n: number) =>
+  n < 1024 ? `${n} B` : n < 1048576 ? `${(n/1024).toFixed(1)} KB` : `${(n/1048576).toFixed(2)} MB`;
 
-// ─── Indexed fonts table ──────────────────────────────────────────────────────
-
-const loading = ref(false);
-const uploading = ref(false);
-const uploadProgress = ref({ done: 0, total: 0 });
+// ── Indexed Font List ─────────────────────────────────────────────────────────
 const fonts = ref<FontItem[]>([]);
-const total = ref(0);
-const page = ref(1);
-const pageSize = ref(50);
-const search = ref("");
-const selectedRowKeys = ref<string[]>([]);
-const dragActive = ref(false);
-let dragCounter = 0;
-const browserExpanded = ref(true);
+const fontTotal = ref(0);
+const fontPage  = ref(1);
+const fontLimit = 100;
+const fontSearch = ref("");
+const fontLoading = ref(false);
+const fontAllLoaded = ref(false);
+const selectedIds = reactive(new Set<string>());
 
-const loadFontList = async () => {
-  if (!hasKey.value) return;
-  loading.value = true;
+// Sentinel for infinite scroll
+const sentinel = ref<HTMLElement | null>(null);
+let io: IntersectionObserver | null = null;
+
+const loadFontList = async (reset = true) => {
+  if (fontLoading.value) return;
+  if (reset) { fontPage.value = 1; fontAllLoaded.value = false; fonts.value = []; selectedIds.clear(); }
+  fontLoading.value = true;
   try {
-    const res = await listFonts(page.value, pageSize.value, search.value);
-    fonts.value = res.data as FontItem[];
-    total.value = res.total;
+    const res = await listFonts(fontPage.value, fontLimit, fontSearch.value);
+    if (reset) {
+      fonts.value = res.data;
+    } else {
+      fonts.value.push(...res.data);
+    }
+    fontTotal.value = res.total;
+    fontAllLoaded.value = fonts.value.length >= res.total;
+    fontPage.value++;
   } catch (e) {
-    message.error(String(e));
+    toast.error(String(e instanceof Error ? e.message : e));
   } finally {
-    loading.value = false;
+    fontLoading.value = false;
+  }
+};
+
+const loadNextPage = () => {
+  if (!fontAllLoaded.value && !fontLoading.value) loadFontList(false);
+};
+
+// Set up IntersectionObserver for infinite scroll
+const setupInfiniteScroll = () => {
+  if (io) { io.disconnect(); io = null; }
+  io = new IntersectionObserver(([entry]) => {
+    if (entry.isIntersecting) loadNextPage();
+  }, { rootMargin: "200px" });
+  if (sentinel.value) io.observe(sentinel.value);
+};
+
+watch(sentinel, (el) => {
+  if (el) setupInfiniteScroll();
+});
+
+let searchTimer: ReturnType<typeof setTimeout>;
+watch(fontSearch, () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadFontList(true), 300);
+});
+
+const toggleSelect = (id: string) => {
+  if (selectedIds.has(id)) selectedIds.delete(id);
+  else selectedIds.add(id);
+};
+
+const deleteSelected = async () => {
+  if (selectedIds.size === 0) return;
+  const ids = [...selectedIds];
+  try {
+    await deleteFontsBatch(ids);
+    toast.success(t("deleted") + ` ×${ids.length}`);
+    loadFontList(true);
+  } catch (e) {
+    toast.error(String(e instanceof Error ? e.message : e));
+  }
+};
+
+const deleteSingle = async (id: string) => {
+  try {
+    await deleteFont(id);
+    toast.success(t("deleted"));
+    loadFontList(true);
+  } catch (e) {
+    toast.error(String(e instanceof Error ? e.message : e));
+  }
+};
+
+const styleLabel = (f: FontItem) => {
+  if (f.bold && f.italic) return t("boldItalic");
+  if (f.bold) return t("bold");
+  if (f.italic) return t("italic");
+  return t("regular");
+};
+
+// ── Upload ─────────────────────────────────────────────────────────────────────
+const DEFAULT_UPLOAD_DIR = "CatCat-Fonts/";
+const uploadDir = ref(DEFAULT_UPLOAD_DIR);
+const uploadQueue = ref<{ file: File; status: "pending" | "uploading" | "ok" | "error"; msg?: string }[]>([]);
+const uploadDragActive = ref(false);
+let uploadDragCounter = 0;
+const uploadRunning = ref(false);
+
+const FONT_EXTS = new Set(["ttf", "otf", "ttc", "otc"]);
+const isFont = (f: File) => FONT_EXTS.has(f.name.split(".").pop()?.toLowerCase() ?? "");
+
+const addToQueue = (files: FileList | File[]) => {
+  const valid = Array.from(files).filter(isFont);
+  if (!valid.length) { toast.error(t("noFontFiles")); return; }
+  uploadQueue.value.push(...valid.map(f => ({ file: f, status: "pending" as const })));
+};
+
+const clearQueue = () => {
+  uploadQueue.value = uploadQueue.value.filter(e => e.status === "uploading");
+};
+
+const startUpload = async () => {
+  if (uploadRunning.value) return;
+  const pending = uploadQueue.value.filter(e => e.status === "pending");
+  if (!pending.length) return;
+  uploadRunning.value = true;
+
+  const dir = uploadDir.value.trim().replace(/\/?$/, "/");
+  let ok = 0;
+  for (const entry of pending) {
+    entry.status = "uploading";
+    try {
+      const results = await uploadFonts([entry.file], dir);
+      const res = results[0];
+      if (res?.error) { entry.status = "error"; entry.msg = res.error; }
+      else { entry.status = "ok"; ok++; }
+    } catch (e) {
+      entry.status = "error";
+      entry.msg = String(e instanceof Error ? e.message : e);
+    }
+  }
+  uploadRunning.value = false;
+  if (ok > 0) { toast.success(t("uploadDone", { n: ok })); loadFontList(true); }
+};
+
+const onUploadDragEnter = (e: DragEvent) => { e.preventDefault(); uploadDragCounter++; uploadDragActive.value = true; };
+const onUploadDragOver  = (e: DragEvent) => e.preventDefault();
+const onUploadDragLeave = (e: DragEvent) => { e.preventDefault(); if (--uploadDragCounter <= 0) { uploadDragActive.value = false; uploadDragCounter = 0; } };
+const onUploadDrop      = (e: DragEvent) => { e.preventDefault(); uploadDragActive.value = false; uploadDragCounter = 0; if (e.dataTransfer?.files) addToQueue(e.dataTransfer.files); };
+const onUploadClick     = () => { const i = document.createElement("input"); i.type = "file"; i.multiple = true; i.accept = ".ttf,.otf,.ttc,.otc"; i.onchange = (e) => { const f = (e.target as HTMLInputElement).files; if (f) addToQueue(f); }; i.click(); };
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+type Tab = "list" | "browser" | "upload" | "stats";
+const activeTab = ref<Tab>("list");
+
+// ── Index Stats ────────────────────────────────────────────────────────────────
+const fontStats = ref<FontStats | null>(null);
+const statsLoading = ref(false);
+
+const loadStats = async () => {
+  statsLoading.value = true;
+  try {
+    fontStats.value = await getFontStats();
+  } catch {
+    // silent
+  } finally {
+    statsLoading.value = false;
   }
 };
 
 onMounted(() => {
   if (hasKey.value) {
     loadRoot();
-    loadFontList();
+    loadFontList(true);
+    loadStats();
   }
 });
-watch([page, pageSize], loadFontList);
 
-let searchTimer: ReturnType<typeof setTimeout>;
-const onSearch = () => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { page.value = 1; loadFontList(); }, 400);
-};
-
-// ─── Upload ───────────────────────────────────────────────────────────────────
-
-const handleUpload = async (fileList: FileList | File[]) => {
-  const files = Array.from(fileList).filter(f => /\.(ttf|otf|ttc|otc)$/i.test(f.name));
-  if (files.length === 0) { message.warning(t("noFontFiles")); return; }
-
-  uploading.value = true;
-  uploadProgress.value = { done: 0, total: files.length };
-
-  try {
-    const results = await uploadFonts(files, (done, total) => {
-      uploadProgress.value = { done, total };
-    });
-    const ok = results.filter(r => !r.error);
-    const fail = results.filter(r => r.error);
-    if (ok.length) message.success(`${t("fontUploadOk")} (${ok.length})`);
-    if (fail.length) message.error(`${t("fontUploadFail")}: ${fail.map(r => r.error).join("; ")}`);
-    await loadFontList();
-  } catch (e) {
-    message.error(String(e));
-  } finally {
-    uploading.value = false;
-    uploadProgress.value = { done: 0, total: 0 };
-  }
-};
-
-const onClickUpload = () => {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = ".ttf,.otf,.ttc,.otc";
-  input.multiple = true;
-  input.onchange = (e) => {
-    const files = (e.target as HTMLInputElement).files;
-    if (files) handleUpload(files);
-  };
-  input.click();
-};
-
-const onDragEnter = (e: DragEvent) => { e.preventDefault(); dragCounter++; dragActive.value = true; };
-const onDragOver = (e: DragEvent) => { e.preventDefault(); };
-const onDragLeave = (e: DragEvent) => { e.preventDefault(); if (--dragCounter <= 0) { dragActive.value = false; dragCounter = 0; } };
-const onDrop = (e: DragEvent) => {
-  e.preventDefault(); dragActive.value = false; dragCounter = 0;
-  if (e.dataTransfer?.files) handleUpload(e.dataTransfer.files);
-};
-
-// ─── Delete ───────────────────────────────────────────────────────────────────
-
-const doDelete = async (id: string) => {
-  try { await deleteFont(id); message.success(t("fontDeleteOk")); await loadFontList(); }
-  catch { message.error(t("fontDeleteFail")); }
-};
-
-const doBatchDelete = async () => {
-  if (!selectedRowKeys.value.length) return;
-  try {
-    const n = await deleteFontsBatch(selectedRowKeys.value);
-    message.success(`${t("fontDeleteOk")} (${n})`);
-    selectedRowKeys.value = [];
-    await loadFontList();
-  } catch { message.error(t("fontDeleteFail")); }
-};
-
-// ─── Table columns ────────────────────────────────────────────────────────────
-
-const columns = computed(() => [
-  { title: t("colFilename"), dataIndex: "filename", key: "filename", ellipsis: true },
-  { title: t("colFamilyNames"), dataIndex: "names", key: "names", ellipsis: true },
-  { title: t("colWeight"), dataIndex: "weight", key: "weight", width: 80 },
-  { title: t("colStyle"), key: "style", width: 90 },
-  { title: t("colSize"), key: "size", width: 90 },
-  { title: t("colDate"), dataIndex: "created_at", key: "created_at", width: 160, ellipsis: true },
-  { title: t("colAction"), key: "action", width: 80, fixed: "right" },
-]);
-
-const formatSize = (bytes: number) => {
-  if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MB";
-  return (bytes / 1024).toFixed(0) + " KB";
-};
-
-const styleLabel = (row: FontItem) => {
-  if (row.bold && row.italic) return t("boldItalic");
-  if (row.bold) return t("bold");
-  if (row.italic) return t("italic");
-  return t("regular");
-};
-
-const rowSelection = reactive({
-  selectedRowKeys,
-  onChange: (keys: string[]) => { selectedRowKeys.value = keys; },
+onBeforeUnmount(() => {
+  io?.disconnect();
 });
 </script>
 
 <template>
-  <!-- ─── Lock screen ─────────────────────────────────────────────────────── -->
-  <div v-if="!hasKey" class="lock-screen">
-    <div class="lock-card">
-      <div class="lock-icon">🔒</div>
-      <h2>{{ t("lockScreenTitle") }}</h2>
-      <p class="lock-desc">{{ t("lockScreenDesc") }}</p>
-      <a-input-password
-        v-model:value="lockKeyInput"
-        :placeholder="t('apiKeyPlaceholder')"
-        size="large"
-        style="margin-bottom:12px"
-        @press-enter="unlockWithKey"
-      />
-      <a-button type="primary" size="large" block @click="unlockWithKey">
-        {{ t("apiKeySave") }}
-      </a-button>
+  <div>
+  <!-- Lock screen -->
+  <div v-if="!hasKey" class="card p-10 flex flex-col items-center text-center gap-5 max-w-md mx-auto mt-12">
+    <div class="w-16 h-16 rounded-2xl bg-amber-100 flex items-center justify-center">
+      <KeyRound class="w-8 h-8 text-amber-500" />
+    </div>
+    <div>
+      <h2 class="font-display font-semibold text-xl text-ink-900 mb-2">{{ t('lockTitle') }}</h2>
+      <p class="text-sm text-ink-400 leading-relaxed">{{ t('lockDesc') }}</p>
+    </div>
+    <div class="w-full flex gap-2">
+      <KInput v-model="lockKeyInput" type="password" :placeholder="t('apiKeyPlaceholder')" class="flex-1" @keyup.enter="unlockWithKey" />
+      <KButton variant="primary" @click="unlockWithKey">{{ t('unlock') }}</KButton>
     </div>
   </div>
 
-  <!-- ─── Main content (requires API key) ───────────────────────────────── -->
-  <div v-else @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
-    <!-- Drag overlay -->
-    <transition name="fade">
-      <div v-if="dragActive" class="drop-overlay">{{ t("dropFontTip") }}</div>
-    </transition>
+  <div v-else class="flex flex-col gap-5">
+    <!-- ─── Tabs ─────────────────────────────────────────────────────────────── -->
+    <div class="flex items-center gap-1 p-1 bg-ink-100/60 rounded-2xl w-fit">
+      <button
+        v-for="tab in [
+          { id: 'list',    icon: Database,     label: t('indexedFonts') },
+          { id: 'browser', icon: FolderOpen,   label: t('r2Browser')    },
+          { id: 'upload',  icon: CloudUpload,  label: t('uploadFonts')  },
+          { id: 'stats',   icon: CheckCircle2, label: t('indexStats')   },
+        ]"
+        :key="tab.id"
+        class="flex items-center gap-1.5 h-8 px-4 rounded-xl text-sm font-medium transition-all duration-150"
+        :class="activeTab === tab.id ? 'bg-white shadow-sm text-ink-900' : 'text-ink-500 hover:text-ink-700'"
+        @click="activeTab = tab.id as Tab"
+      >
+        <component :is="tab.icon" class="w-3.5 h-3.5" />
+        {{ tab.label }}
+      </button>
+    </div>
 
-    <!-- ─── R2 File Browser ──────────────────────────────────────────────── -->
-    <a-card
-      :title="t('r2Browser')"
-      style="margin-bottom:16px"
-      :body-style="{ padding: browserExpanded ? '12px' : '0' }"
-    >
-      <template #extra>
-        <a-button type="link" size="small" @click="browserExpanded = !browserExpanded">
-          {{ browserExpanded ? t("collapse") : t("expand") }}
-        </a-button>
-        <a-button type="link" size="small" :loading="browserLoading" @click="loadRoot">
-          {{ t("refresh") }}
-        </a-button>
+    <!-- ─── Tab: Indexed Fonts ─────────────────────────────────────────────── -->
+    <div v-if="activeTab === 'list'" class="flex flex-col gap-4">
+      <!-- Toolbar -->
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="relative flex-1 min-w-48">
+          <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
+          <input
+            v-model="fontSearch"
+            class="w-full h-9 pl-9 pr-3 rounded-xl border border-ink-200 text-sm text-ink-700 placeholder:text-ink-400 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-all bg-white"
+            :placeholder="t('searchFonts')"
+          />
+        </div>
+        <span class="text-sm text-ink-400">{{ t('fontTotal', { n: fontTotal }) }}</span>
+        <div class="flex items-center gap-2">
+          <KButton v-if="selectedIds.size > 0" variant="danger" size="sm" @click="deleteSelected">
+            <Trash2 class="w-3.5 h-3.5" />{{ selectedIds.size }} {{ t('selected') }}
+          </KButton>
+          <KButton variant="ghost" size="sm" @click="loadFontList(true)">
+            <RefreshCcw class="w-3.5 h-3.5" />
+          </KButton>
+        </div>
+      </div>
+
+      <!-- Font list with infinite scroll -->
+      <div class="flex flex-col gap-1.5">
+        <KEmpty v-if="!fontLoading && fonts.length === 0" :title="t('noFontsIndexed')" :description="t('noFonts')" />
+
+        <TransitionGroup name="list">
+          <div
+            v-for="font in fonts"
+            :key="font.id"
+            class="card flex items-center gap-3 px-4 py-3 hover:shadow-md transition-shadow cursor-pointer"
+            style="content-visibility: auto; contain-intrinsic-size: 0 56px;"
+            @click="toggleSelect(font.id)"
+          >
+            <div
+              class="w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all"
+              :class="selectedIds.has(font.id)
+                ? 'bg-sakura-400 border-sakura-400'
+                : 'border-ink-200 hover:border-sakura-300'"
+            >
+              <CheckCircle2 v-if="selectedIds.has(font.id)" class="w-3.5 h-3.5 text-white" />
+            </div>
+
+            <div class="flex-1 min-w-0">
+              <p class="font-medium text-sm text-ink-900 truncate">{{ font.filename }}</p>
+              <p class="text-xs text-ink-400 truncate">{{ font.names }}</p>
+            </div>
+
+            <div class="hidden sm:flex items-center gap-2">
+              <KBadge variant="default">{{ styleLabel(font) }}</KBadge>
+              <KBadge variant="default">{{ font.weight }}</KBadge>
+              <span class="text-xs text-ink-400">{{ formatBytes(font.size) }}</span>
+            </div>
+
+            <button
+              class="w-7 h-7 rounded-lg flex items-center justify-center text-ink-400 hover:text-rose-500 hover:bg-rose-50 transition-colors shrink-0"
+              @click.stop="deleteSingle(font.id)"
+            ><Trash2 class="w-3.5 h-3.5" /></button>
+          </div>
+        </TransitionGroup>
+
+        <!-- Infinite scroll sentinel -->
+        <div ref="sentinel" class="h-4 flex items-center justify-center">
+          <Loader2 v-if="fontLoading && fonts.length > 0" class="w-4 h-4 text-sakura-400 animate-spin-slow" />
+          <span v-else-if="fontAllLoaded && fonts.length > 0" class="text-xs text-ink-300">
+            — {{ t('fontTotal', { n: fontTotal }) }} —
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Tab: R2 Browser ────────────────────────────────────────────────── -->
+    <div v-if="activeTab === 'browser'" class="flex flex-col gap-4">
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-medium text-ink-700">{{ t('r2Browser') }}</span>
+        <div class="flex-1" />
+        <!-- Global progress indicator -->
+        <span v-if="indexProgress['']?.active" class="text-xs text-ink-400 font-mono">
+          {{ indexProgress[''].indexed }}/{{ indexProgress[''].total }}
+        </span>
+        <KButton
+          variant="ghost"
+          size="sm"
+          :disabled="indexProgress['']?.active"
+          @click="indexAllUnder('')"
+        >
+          <Database class="w-3.5 h-3.5" :class="indexProgress['']?.active && 'animate-pulse'" />
+          {{ t('indexAll') }}
+        </KButton>
+        <KButton variant="ghost" size="sm" @click="loadRoot">
+          <RefreshCcw class="w-3.5 h-3.5" :class="browserLoading && 'animate-spin-slow'" />
+        </KButton>
+      </div>
+
+      <div v-if="browserLoading" class="flex justify-center py-8">
+        <KSpinner />
+      </div>
+      <KEmpty v-else-if="r2Tree.length === 0" :title="t('r2Empty')" />
+      <div v-else class="flex flex-col gap-1 font-mono text-sm">
+        <R2NodeRow
+          v-for="node in r2Tree"
+          :key="node.prefix"
+          :node="node"
+          :depth="0"
+          :index-progress="indexProgress"
+          @toggle="toggleFolder"
+          @load-more="loadMoreInFolder"
+          @index-file="indexSingleFile"
+          @index-all="indexAllUnder"
+        />
+      </div>
+    </div>
+
+    <!-- ─── Tab: Upload ───────────────────────────────────────────────────── -->
+    <div v-if="activeTab === 'upload'" class="flex flex-col gap-4">
+      <!-- Upload dir config -->
+      <div class="card p-4 flex items-center gap-3">
+        <FolderOpen class="w-4 h-4 text-sakura-400 shrink-0" />
+        <span class="text-sm font-medium text-ink-700 shrink-0">{{ t('uploadDir') }}</span>
+        <input
+          v-model="uploadDir"
+          class="flex-1 h-8 px-3 rounded-lg border border-ink-200 text-sm font-mono text-ink-700 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-all"
+          placeholder="CatCat-Fonts/"
+        />
+      </div>
+
+      <!-- Drop zone -->
+      <div
+        class="drop-zone cursor-pointer py-10 flex flex-col items-center gap-3 transition-all"
+        :class="uploadDragActive ? 'ring-2 ring-sakura-400 scale-[1.01]' : ''"
+        @dragenter="onUploadDragEnter"
+        @dragover="onUploadDragOver"
+        @dragleave="onUploadDragLeave"
+        @drop="onUploadDrop"
+        @click="onUploadClick"
+      >
+        <CloudUpload class="w-8 h-8 text-sakura-400" :stroke-width="1.5" />
+        <p class="font-medium text-ink-700">{{ t('dropFontsHere') }}</p>
+        <p class="text-xs text-ink-400">{{ t('fontsHint') }}</p>
+      </div>
+
+      <!-- Queue -->
+      <div v-if="uploadQueue.length > 0" class="flex flex-col gap-2">
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-ink-500">{{ uploadQueue.length }} {{ t('files', uploadQueue.length) }}</span>
+          <div class="flex-1" />
+          <KButton variant="primary" size="sm" :disabled="uploadRunning" @click="startUpload">
+            <Upload class="w-3.5 h-3.5" />
+            {{ uploadRunning ? t('fontUploading') : t('startUpload') }}
+          </KButton>
+          <KButton variant="ghost" size="sm" :disabled="uploadRunning" @click="clearQueue">
+            <X class="w-3.5 h-3.5" />{{ t('clearQueue') }}
+          </KButton>
+        </div>
+
+        <div class="flex flex-col gap-1 max-h-72 overflow-y-auto">
+          <div
+            v-for="(entry, i) in uploadQueue"
+            :key="i"
+            class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm"
+            :class="{
+              'bg-white border border-ink-100': entry.status === 'pending',
+              'bg-sakura-50 border border-sakura-100': entry.status === 'uploading',
+              'bg-mint-50 border border-mint-200': entry.status === 'ok',
+              'bg-rose-50 border border-rose-200': entry.status === 'error',
+            }"
+          >
+            <Loader2 v-if="entry.status === 'uploading'" class="w-4 h-4 text-sakura-400 animate-spin-slow shrink-0" />
+            <CheckCircle2 v-else-if="entry.status === 'ok'" class="w-4 h-4 text-mint-500 shrink-0" />
+            <AlertTriangle v-else-if="entry.status === 'error'" class="w-4 h-4 text-rose-500 shrink-0" />
+            <FileText v-else class="w-4 h-4 text-ink-400 shrink-0" />
+            <span class="flex-1 truncate font-mono text-xs text-ink-700">{{ entry.file.name }}</span>
+            <span v-if="entry.msg" class="text-xs text-rose-500 truncate max-w-32">{{ entry.msg }}</span>
+            <span class="text-xs text-ink-400 shrink-0">{{ formatBytes(entry.file.size) }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Tab: Index Stats ───────────────────────────────────────────────── -->
+    <div v-if="activeTab === 'stats'" class="flex flex-col gap-4">
+      <div class="card p-4 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <CheckCircle2 class="w-4 h-4 text-mint-400" />
+          <span class="font-display font-semibold text-ink-900">{{ t('indexStats') }}</span>
+        </div>
+        <KButton variant="ghost" size="sm" :disabled="statsLoading" @click="loadStats">
+          <RefreshCcw class="w-3.5 h-3.5" :class="statsLoading && 'animate-spin-slow'" />
+          {{ t('refresh') }}
+        </KButton>
+      </div>
+
+      <div v-if="statsLoading && !fontStats" class="flex justify-center py-8">
+        <KSpinner />
+      </div>
+
+      <template v-else-if="fontStats">
+        <!-- Total -->
+        <div class="card p-5 flex items-center gap-4">
+          <div class="w-12 h-12 rounded-2xl bg-sakura-100 flex items-center justify-center shrink-0">
+            <Database class="w-6 h-6 text-sakura-500" />
+          </div>
+          <div>
+            <p class="text-sm text-ink-500">{{ t('totalIndexed') }}</p>
+            <p class="text-3xl font-display font-bold text-ink-900">{{ fontStats.total.toLocaleString() }}</p>
+          </div>
+        </div>
+
+        <!-- Per-folder breakdown -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div
+            v-for="folder in fontStats.folders"
+            :key="folder.prefix"
+            class="card p-4 flex items-center gap-3"
+          >
+            <FolderOpen class="w-5 h-5 text-amber-400 shrink-0" />
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-mono text-ink-500 truncate">{{ folder.prefix }}</p>
+              <p class="text-lg font-semibold text-ink-900">{{ folder.count.toLocaleString() }}</p>
+            </div>
+            <!-- progress bar relative to total -->
+            <div class="w-16 bg-ink-100 rounded-full h-1.5 shrink-0">
+              <div
+                class="bg-sakura-400 h-1.5 rounded-full transition-all duration-500"
+                :style="{ width: fontStats!.total > 0 ? `${(folder.count / fontStats!.total * 100).toFixed(1)}%` : '0%' }"
+              />
+            </div>
+          </div>
+        </div>
+
+        <!-- Active index operations -->
+        <template v-if="Object.keys(indexProgress).some(k => indexProgress[k]?.active)">
+          <div class="card p-4">
+            <p class="text-sm font-medium text-ink-700 mb-3 flex items-center gap-2">
+              <Loader2 class="w-3.5 h-3.5 animate-spin text-sakura-400" />
+              {{ t('indexRunning') }}
+            </p>
+            <div v-for="(prog, prefix) in indexProgress" :key="prefix" class="flex items-center gap-3 text-sm py-1">
+              <span class="font-mono text-ink-500 flex-1 truncate">{{ prefix || '(all)' }}</span>
+              <span v-if="prog.phase === 'listing'" class="text-xs text-amber-500">{{ t('phaseListing') }}</span>
+              <span v-else-if="prog.phase === 'indexing'" class="text-xs text-sky-500">{{ prog.indexed }}/{{ prog.total }}</span>
+              <span v-else class="text-xs text-mint-500">{{ t('phaseDone') }}</span>
+            </div>
+          </div>
+        </template>
       </template>
 
-      <div v-show="browserExpanded">
-        <a-spin :spinning="browserLoading">
-          <a-tree
-            v-if="treeData.length > 0"
-            :tree-data="treeData"
-            :load-data="loadTreeData"
-            block-node
-            class="r2-tree"
-          >
-            <template #title="nodeData">
-              <span class="tree-node">
-                <span class="tree-node-icon">
-                  {{ nodeData._type === 'folder' ? '📁' : (nodeData._indexed ? '✅' : '📄') }}
-                </span>
-                <span class="tree-node-name">{{ nodeData.title }}</span>
-                <span v-if="nodeData._type === 'file'" class="tree-node-size">
-                  {{ formatSize(nodeData._size ?? 0) }}
-                </span>
-
-                <!-- File: index button if not yet indexed -->
-                <a-button
-                  v-if="nodeData._type === 'file' && !nodeData._indexed"
-                  :loading="nodeData._indexing"
-                  size="small"
-                  type="default"
-                  class="tree-action"
-                  @click.stop="doIndexFile(nodeData)"
-                >
-                  {{ t("r2IndexFile") }}
-                </a-button>
-                <a-tag v-if="nodeData._type === 'file' && nodeData._indexed" color="success" class="tree-action">
-                  {{ t("r2Indexed") }}
-                </a-tag>
-
-                <!-- Folder: index-all button + progress -->
-                <template v-if="nodeData._type === 'folder'">
-                  <a-button
-                    :loading="folderIndex[nodeData.key]?.indexing"
-                    size="small"
-                    type="primary"
-                    ghost
-                    class="tree-action"
-                    @click.stop="doIndexFolder(nodeData.key)"
-                  >
-                    {{ t("r2IndexAll") }}
-                  </a-button>
-                  <span
-                    v-if="folderIndex[nodeData.key]?.indexing || folderIndex[nodeData.key]?.indexed > 0"
-                    class="index-stats"
-                  >
-                    <template v-if="folderIndex[nodeData.key]?.indexing">{{ t("r2Indexing") }}…</template>
-                    <template v-else>
-                      +{{ folderIndex[nodeData.key]?.indexed }}
-                      <span v-if="folderIndex[nodeData.key]?.errors" style="color:#ff4d4f">
-                        / {{ folderIndex[nodeData.key]?.errors }} err
-                      </span>
-                    </template>
-                  </span>
-                </template>
-              </span>
-            </template>
-          </a-tree>
-          <a-empty v-else-if="!browserLoading" :description="t('r2Empty')" />
-        </a-spin>
-      </div>
-    </a-card>
-
-    <!-- ─── Indexed fonts ─────────────────────────────────────────────────── -->
-    <a-card :title="t('indexedFonts')">
-      <!-- Toolbar -->
-      <a-space style="margin-bottom:16px;flex-wrap:wrap;" :size="8">
-        <a-button type="primary" :loading="uploading" @click="onClickUpload">
-          <template v-if="uploading && uploadProgress.total > 0">
-            {{ t("fontUploading") }} ({{ uploadProgress.done }}/{{ uploadProgress.total }})
-          </template>
-          <template v-else>{{ t("fontUpload") }}</template>
-        </a-button>
-        <a-button danger :disabled="selectedRowKeys.length === 0" @click="doBatchDelete">
-          {{ t("fontBatchDelete") }}
-          <template v-if="selectedRowKeys.length">({{ selectedRowKeys.length }})</template>
-        </a-button>
-        <a-input-search
-          v-model:value="search"
-          :placeholder="t('fontSearch')"
-          allow-clear
-          style="width:240px"
-          @change="onSearch"
-          @search="onSearch"
-        />
-        <span style="color:#888;font-size:13px;">{{ t("fontTotal", { n: total }) }}</span>
-      </a-space>
-
-      <a-alert
-        v-if="fonts.length === 0 && !loading"
-        :message="t('noFonts')"
-        :description="t('fontsHint')"
-        type="info"
-        show-icon
-        style="margin-bottom:16px"
-      />
-
-      <a-table
-        :columns="columns"
-        :data-source="fonts"
-        :loading="loading"
-        :row-selection="rowSelection"
-        row-key="id"
-        :pagination="{
-          current: page,
-          pageSize,
-          total,
-          showSizeChanger: true,
-          pageSizeOptions: ['20','50','100','200'],
-          onChange: (p: number, ps: number) => { page = p; pageSize = ps; },
-          showTotal: (t: number) => `共 ${t} 条`,
-        }"
-        size="small"
-        :scroll="{ x: 900 }"
-      >
-        <template #bodyCell="{ column, record }">
-          <template v-if="column.key === 'style'">
-            <a-tag :color="record.bold || record.italic ? 'blue' : 'default'">
-              {{ styleLabel(record as FontItem) }}
-            </a-tag>
-          </template>
-          <template v-else-if="column.key === 'size'">{{ formatSize((record as FontItem).size) }}</template>
-          <template v-else-if="column.key === 'action'">
-            <a-popconfirm :title="t('deleteConfirm')" @confirm="doDelete((record as FontItem).id)">
-              <a-button type="link" danger size="small">{{ t("delete") }}</a-button>
-            </a-popconfirm>
-          </template>
-        </template>
-      </a-table>
-    </a-card>
+      <KEmpty v-else :title="t('statsEmpty')" />
+    </div>
+  </div>
   </div>
 </template>
 
+
 <style scoped>
-.lock-screen {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 60vh;
-}
-.lock-card {
-  width: 380px;
-  padding: 40px 32px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.1);
-  text-align: center;
-}
-.lock-icon { font-size: 48px; margin-bottom: 16px; }
-.lock-card h2 { margin-bottom: 8px; }
-.lock-desc { color: #888; margin-bottom: 20px; }
-
-.drop-overlay {
-  position: fixed; inset: 0; z-index: 9999;
-  background: rgba(22,119,255,0.12);
-  border: 3px dashed #1677ff;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 20px; color: #1677ff; pointer-events: none;
-}
-
-.r2-tree { max-height: 480px; overflow-y: auto; }
-
-.tree-node {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 24px;
-}
-.tree-node-icon { flex-shrink: 0; }
-.tree-node-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tree-node-size { color: #999; font-size: 12px; flex-shrink: 0; }
-.tree-action { flex-shrink: 0; }
-.index-stats { color: #888; font-size: 12px; flex-shrink: 0; }
-
-.fade-enter-active, .fade-leave-active { transition: opacity .25s; }
-.fade-enter-from, .fade-leave-to { opacity: 0; }
+.list-enter-active { transition: all 0.2s cubic-bezier(0.25, 1, 0.5, 1); }
+.list-leave-active { transition: all 0.15s ease-in; position: absolute; width: 100%; }
+.list-enter-from { opacity: 0; transform: translateY(-4px); }
+.list-leave-to   { opacity: 0; }
+.list-move       { transition: transform 0.2s cubic-bezier(0.25, 1, 0.5, 1); }
 </style>
-
-

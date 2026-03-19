@@ -86,6 +86,12 @@ export interface IndexFolderResponse {
   done: boolean;
 }
 
+export interface ListKeysResponse {
+  keys: { key: string; size: number }[];
+  nextCursor: string | null;
+  done: boolean;
+}
+
 export interface SubsetOptions {
   fontsCheck?: boolean;
   clearFonts?: boolean;
@@ -115,6 +121,7 @@ export async function listFonts(page = 1, limit = 50, search = ""): Promise<Font
  */
 export async function uploadFonts(
   files: File[],
+  targetDir?: string,
   onProgress?: (done: number, total: number) => void,
 ): Promise<UploadResult[]> {
   const results: UploadResult[] = [];
@@ -122,10 +129,15 @@ export async function uploadFonts(
     const f = files[i];
     const form = new FormData();
     form.append("file", f);
+    const extraHeaders: Record<string, string> = {};
+    if (targetDir) {
+      const dir = targetDir.trim().replace(/\/?$/, "/");
+      extraHeaders["X-Target-Dir"] = dir;
+    }
     try {
       const res = await fetch(`${BASE}/api/fonts`, {
         method: "POST",
-        headers: authHeaders(),
+        headers: { ...authHeaders(), ...extraHeaders },
         body: form,
       });
       const json = await res.json() as { results: UploadResult[] };
@@ -167,7 +179,7 @@ export async function browseR2(prefix = "", cursor?: string): Promise<BrowseResp
 export async function indexR2Folder(
   prefix: string,
   cursor?: string,
-  batchSize = 5,
+  batchSize = 10,
 ): Promise<IndexFolderResponse> {
   const res = await fetch(`${BASE}/api/fonts/index-folder`, {
     method: "POST",
@@ -178,12 +190,31 @@ export async function indexR2Folder(
   return res.json();
 }
 
+export async function listR2Keys(prefix: string, cursor?: string, limit = 500): Promise<ListKeysResponse> {
+  const params = new URLSearchParams({ prefix, limit: String(limit) });
+  if (cursor) params.set("cursor", cursor);
+  const res = await fetch(`${BASE}/api/fonts/list-keys?${params}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 export async function indexR2Keys(r2Keys: string[]): Promise<IndexFolderResponse> {
   const res = await fetch(`${BASE}/api/fonts/index-folder`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify({ r2Keys }),
   });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export interface FontStats {
+  total: number;
+  folders: Array<{ prefix: string; count: number }>;
+}
+
+export async function getFontStats(): Promise<FontStats> {
+  const res = await fetch(`${BASE}/api/fonts/stats`, { headers: authHeaders() });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }

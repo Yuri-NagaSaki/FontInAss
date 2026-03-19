@@ -3,11 +3,12 @@
  *
  * All routes require X-API-Key header when API_KEY secret is configured.
  *
- * GET  /api/fonts           - List indexed fonts (paginated, searchable)
- * POST /api/fonts           - Upload font file (one file per request)
- * DELETE /api/fonts/:id     - Delete a font file and all its metadata
- * DELETE /api/fonts         - Batch delete
- * GET  /api/fonts/browse    - Browse R2 bucket as a folder tree
+ * GET  /api/fonts              - List indexed fonts (paginated, searchable)
+ * POST /api/fonts              - Upload font file (one file per request)
+ * DELETE /api/fonts/:id        - Delete a font file and all its metadata
+ * DELETE /api/fonts            - Batch delete
+ * GET  /api/fonts/browse       - Browse R2 bucket as a folder tree (delimiter-based)
+ * GET  /api/fonts/list-keys    - Flat recursive key listing under a prefix (no font reads)
  * POST /api/fonts/index-folder - Index R2 objects by prefix or explicit keys
  */
 
@@ -30,6 +31,32 @@ fonts.use("*", async (c, next) => {
     return c.json({ error: "Unauthorized" }, 401);
   }
   return next();
+});
+
+// ─── Stats (requires auth) ────────────────────────────────────────────────────
+fonts.get("/stats", async (c) => {
+  try {
+    const FOLDERS = ["CatCat-Fonts/", "FounderTypeFonts/", "Lam-Fonts/", "XZ-Fonts/"];
+
+    const [totalResult, ...folderResults] = await Promise.all([
+      c.env.DB.prepare("SELECT COUNT(*) as cnt FROM font_files").first<{ cnt: number }>(),
+      ...FOLDERS.map(prefix =>
+        c.env.DB.prepare(
+          "SELECT COUNT(*) as cnt FROM font_files WHERE r2_key LIKE ?"
+        ).bind(`${prefix}%`).first<{ cnt: number }>()
+      ),
+    ]);
+
+    return c.json({
+      total: totalResult?.cnt ?? 0,
+      folders: FOLDERS.map((prefix, i) => ({
+        prefix,
+        count: folderResults[i]?.cnt ?? 0,
+      })),
+    });
+  } catch (e) {
+    return c.json({ total: 0, folders: [], error: String(e) }, 500);
+  }
 });
 
 // ─── Browse R2 bucket ─────────────────────────────────────────────────────────
@@ -80,6 +107,41 @@ fonts.get("/browse", async (c) => {
   });
 });
 
+// ─── Flat recursive key listing ───────────────────────────────────────────────
+// Lists ALL font file keys under a prefix without downloading files.
+// Used by the frontend to enumerate all keys before batched indexing.
+// Returns up to `limit` (max 500) keys per call.
+
+fonts.get("/list-keys", async (c) => {
+  const { searchParams } = new URL(c.req.url);
+  const prefix = searchParams.get("prefix") ?? "";
+  const cursor = searchParams.get("cursor") ?? undefined;
+  const limit = Math.min(500, Math.max(1, parseInt(searchParams.get("limit") ?? "500", 10)));
+
+  const FONT_EXTS = new Set(["ttf", "otf", "ttc", "otc"]);
+
+  const listed = await c.env.FONTS_BUCKET.list({
+    prefix,
+    cursor,
+    limit,
+    // No delimiter — flat recursive listing of all objects under prefix
+  });
+
+  const keys = listed.objects
+    .filter((o) => FONT_EXTS.has(o.key.split(".").pop()?.toLowerCase() ?? ""))
+    .map((o) => ({ key: o.key, size: o.size }));
+
+  const nextCursor = listed.truncated
+    ? (listed as unknown as { cursor: string }).cursor ?? null
+    : null;
+
+  return c.json({
+    keys,
+    nextCursor,
+    done: !listed.truncated,
+  });
+});
+
 // ─── Index R2 objects ─────────────────────────────────────────────────────────
 // Index fonts in a prefix (folder) batch-by-batch, or a specific list of keys.
 // Call repeatedly with `cursor` until `done: true`.
@@ -92,7 +154,7 @@ fonts.post("/index-folder", async (c) => {
     return c.json({ error: "Expected JSON body" }, 400);
   }
 
-  const { prefix, cursor, r2Keys, batchSize = 5 } = body;
+  const { prefix, cursor, r2Keys, batchSize = 10 } = body;
 
   const FONT_EXTS = new Set(["ttf", "otf", "ttc", "otc"]);
   let objectsToProcess: { key: string; size: number }[] = [];
@@ -100,8 +162,9 @@ fonts.post("/index-folder", async (c) => {
   let done = true;
 
   if (r2Keys && r2Keys.length > 0) {
-    // Explicit key list — index these specific files
+    // Explicit key list — index these specific files (max 50 per call)
     objectsToProcess = r2Keys
+      .slice(0, 50)
       .filter((k) => FONT_EXTS.has(k.split(".").pop()?.toLowerCase() ?? ""))
       .map((k) => ({ key: k, size: 0 }));
   } else if (prefix !== undefined) {
@@ -109,7 +172,7 @@ fonts.post("/index-folder", async (c) => {
     const listed = await c.env.FONTS_BUCKET.list({
       prefix,
       cursor,
-      limit: Math.min(Math.max(1, batchSize), 20),
+      limit: Math.min(Math.max(1, batchSize), 50),
     });
     objectsToProcess = listed.objects
       .filter((o) => FONT_EXTS.has(o.key.split(".").pop()?.toLowerCase() ?? ""))
@@ -135,28 +198,31 @@ fonts.post("/index-folder", async (c) => {
     alreadyIndexed = new Set((existing.results ?? []).map((r) => r.r2_key));
   }
 
+  const toIndex = objectsToProcess.filter((o) => !alreadyIndexed.has(o.key));
+  const skipped = objectsToProcess.length - toIndex.length;
   let indexed = 0;
-  let skipped = 0;
   const errors: string[] = [];
 
-  for (const obj of objectsToProcess) {
-    if (alreadyIndexed.has(obj.key)) {
-      skipped++;
-      continue;
-    }
-
-    try {
-      const r2Obj = await c.env.FONTS_BUCKET.get(obj.key);
-      if (!r2Obj) {
-        errors.push(`${obj.key}: not found in R2`);
-        continue;
+  // Process in parallel with concurrency limit of 10
+  const CONCURRENCY = 10;
+  for (let i = 0; i < toIndex.length; i += CONCURRENCY) {
+    const chunk = toIndex.slice(i, i + CONCURRENCY);
+    const results = await Promise.allSettled(
+      chunk.map(async (obj) => {
+        const r2Obj = await c.env.FONTS_BUCKET.get(obj.key);
+        if (!r2Obj) throw new Error(`not found in R2`);
+        const bytes = new Uint8Array(await r2Obj.arrayBuffer());
+        const filename = obj.key.split("/").pop() ?? obj.key;
+        await indexFont(c.env, filename, bytes, obj.key);
+      })
+    );
+    for (let j = 0; j < results.length; j++) {
+      if (results[j].status === "fulfilled") {
+        indexed++;
+      } else {
+        const err = (results[j] as PromiseRejectedResult).reason;
+        errors.push(`${chunk[j].key}: ${err instanceof Error ? err.message : String(err)}`);
       }
-      const bytes = new Uint8Array(await r2Obj.arrayBuffer());
-      const filename = obj.key.split("/").pop() ?? obj.key;
-      await indexFont(c.env, filename, bytes, obj.key);
-      indexed++;
-    } catch (e) {
-      errors.push(`${obj.key}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -216,7 +282,9 @@ fonts.get("/", async (c) => {
     `).bind(limit, offset).all().then(r => r.results);
   }
 
-  return c.json({ total, page, limit, data: rows });
+  return c.json({ total, page, limit, data: rows }, 200, {
+    "Cache-Control": "public, max-age=10, stale-while-revalidate=30",
+  });
 });
 
 // ─── Upload font (single file per request) ────────────────────────────────────
@@ -247,7 +315,9 @@ fonts.post("/", async (c) => {
     }
     try {
       const bytes = new Uint8Array(await fileEntry.arrayBuffer());
-      results.push(await indexFont(c.env, filename, bytes));
+      const targetDir = c.req.header("x-target-dir") ?? "";
+      const r2KeyOverride = targetDir ? `${targetDir}${filename}` : undefined;
+      results.push(await indexFont(c.env, filename, bytes, r2KeyOverride));
     } catch (e) {
       results.push({
         filename,
@@ -326,7 +396,7 @@ async function indexFont(
     return { filename, id: "", faces: 0, error: "Could not parse font metadata" };
   }
 
-  const fileId = nanoid();
+  const fileId = crypto.randomUUID();
   const r2Key = existingR2Key ?? `fonts/${fileId}/${filename}`;
 
   if (!existingR2Key) {
@@ -344,7 +414,7 @@ async function indexFont(
   );
 
   for (const face of faces) {
-    const faceId = nanoid();
+    const faceId = crypto.randomUUID();
     stmts.push(
       env.DB.prepare(
         "INSERT OR IGNORE INTO font_info (id, file_id, font_index, weight, bold, italic) VALUES (?, ?, ?, ?, ?, ?)"
@@ -374,12 +444,6 @@ async function indexFont(
   });
 
   return { filename, id: fileId, faces: faces.length };
-}
-
-function nanoid(size = 21): string {
-  const alphabet = "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
-  const bytes = crypto.getRandomValues(new Uint8Array(size));
-  return Array.from(bytes, b => alphabet[b & 63]).join("");
 }
 
 export default fonts;

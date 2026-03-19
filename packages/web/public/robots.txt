@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://fontinass-worker.asukas.workers.dev/sitemap.xml

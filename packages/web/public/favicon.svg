@@ -1,4 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#1677ff"/>
-  <text x="5" y="23" font-family="monospace" font-size="16" font-weight="bold" fill="white">F</text>
+  <defs>
+    <radialGradient id="ctr" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f9a8d4"/>
+      <stop offset="100%" stop-color="#ec4899"/>
+    </radialGradient>
+  </defs>
+  <!-- 5 petals arranged in a flower -->
+  <g transform="translate(16,16)">
+    <ellipse rx="4" ry="8" fill="url(#ctr)" transform="rotate(0) translate(0,-5)"/>
+    <ellipse rx="4" ry="8" fill="url(#ctr)" transform="rotate(72) translate(0,-5)"/>
+    <ellipse rx="4" ry="8" fill="url(#ctr)" transform="rotate(144) translate(0,-5)"/>
+    <ellipse rx="4" ry="8" fill="url(#ctr)" transform="rotate(216) translate(0,-5)"/>
+    <ellipse rx="4" ry="8" fill="url(#ctr)" transform="rotate(288) translate(0,-5)"/>
+    <!-- Center -->
+    <circle r="3.5" fill="#fdf2f8" stroke="#f472b6" stroke-width="1"/>
+    <circle r="1.5" fill="#ec4899"/>
+  </g>
 </svg>

@@ -1,29 +1,22 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
-import Components from "unplugin-vue-components/vite";
-import AutoImport from "unplugin-auto-import/vite";
-import { AntDesignVueResolver } from "unplugin-vue-components/resolvers";
+import tailwindcss from "@tailwindcss/vite";
+import path from "path";
 
 export default defineConfig({
   plugins: [
+    tailwindcss(),
     vue(),
-    AutoImport({
-      imports: ["vue", "vue-router", "vue-i18n", "@vueuse/core"],
-      dts: true,
-    }),
-    Components({
-      resolvers: [
-        AntDesignVueResolver({ importStyle: false }),
-      ],
-      dts: true,
-    }),
   ],
+  resolve: {
+    alias: { "@": path.resolve(__dirname, "./src") },
+  },
   build: {
     rollupOptions: {
       output: {
         manualChunks: {
           "vendor-vue": ["vue", "vue-router", "vue-i18n"],
-          "vendor-antd": ["ant-design-vue"],
+          "vendor-icons": ["lucide-vue-next"],
           "vendor-zip": ["jszip", "file-saver"],
         },
       },
@@ -38,3 +31,4 @@ export default defineConfig({
     },
   },
 });
+
