@@ -18,6 +18,8 @@ export interface AnalyseResult {
   fontCharMap: FontCharMap;
   /** Maps internal renamed fonts back to original names (subset prefix stripping) */
   subRename: Record<string, string>;
+  /** Maps lowercased font name → original cased name (first occurrence wins) */
+  originalNames: Record<string, string>;
 }
 
 function makeFontKey(name: string, weight: number, italic: boolean): string {
@@ -140,10 +142,17 @@ function parseDialogueText(
   styleWeight: Record<string, number>,
   styleItalic: Record<string, boolean>,
   fontCharMap: FontCharMap,
+  originalNames: Record<string, string>,
 ): void {
   let curFont = defaultFontName;
   let curWeight = defaultWeight;
   let curItalic = defaultItalic;
+
+  const recordName = (name: string) => {
+    const lower = name.toLowerCase();
+    if (!(lower in originalNames)) originalNames[lower] = name;
+  };
+  recordName(defaultFontName);
 
   let i = 0;
   const len = text.length;
@@ -170,6 +179,7 @@ function parseDialogueText(
         curFont, curWeight, curItalic,
         styleFontName, styleWeight, styleItalic,
       );
+      recordName(curFont);
       i = end + 1;
       continue;
     }
@@ -225,6 +235,7 @@ export function analyseAss(assText: string): AnalyseResult {
   const styleItalic: Record<string, boolean> = {};
   const fontCharMap: FontCharMap = {};
   const subRename: Record<string, string> = {};
+  const originalNames: Record<string, string> = {};
 
   let firstStyleName: string | null = null;
 
@@ -332,12 +343,13 @@ export function analyseAss(assText: string): AnalyseResult {
           defaultFont, defaultWeight, defaultItalic,
           styleFontName, styleWeight, styleItalic,
           fontCharMap,
+          originalNames,
         );
       }
     }
   }
 
-  return { fontCharMap, subRename };
+  return { fontCharMap, subRename, originalNames };
 }
 
 /**

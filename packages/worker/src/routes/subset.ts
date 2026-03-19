@@ -210,12 +210,14 @@ async function processSubtitle(
   }
 
   // Parse ASS to get per-font codepoint sets
-  const { fontCharMap } = analyseAss(text);
+  const { fontCharMap, originalNames } = analyseAss(text);
   const fontEntries = Object.entries(fontCharMap);
 
   if (fontEntries.length === 0) {
     return { code: CODE.CLIENT_ERROR, messages: ["No fonts referenced in subtitle"], data: null };
   }
+
+  const displayName = (nameLower: string) => originalNames[nameLower] ?? nameLower;
 
   // Build batch lookup requests — key = "nameLower|weight|italic"
   const lookupReqs = fontEntries.map(([key]) => {
@@ -238,7 +240,7 @@ async function processSubtitle(
     }
     const missing = lookupReqs.filter(r => !strictMatchMap.get(r.key)).map(r => r.nameLower);
     if (missing.length > 0) {
-      return { code: CODE.MISSING_FONT, messages: missing.map(n => `Missing font: [${n}]`), data: null };
+      return { code: CODE.MISSING_FONT, messages: missing.map(n => `Missing font: [${displayName(n)}]`), data: null };
     }
   }
 
@@ -271,13 +273,13 @@ async function processSubtitle(
 
     const match = matchMap.get(key);
     if (!match) {
-      subsetResults.push({ encoded: "", missingGlyphs: "", error: `Missing font: [${nameLower}]` });
+      subsetResults.push({ encoded: "", missingGlyphs: "", error: `Missing font: [${displayName(nameLower)}]` });
       continue;
     }
 
     const fontBytes = await loadBytes(match.r2Key);
     if (!fontBytes) {
-      subsetResults.push({ encoded: "", missingGlyphs: "", error: `Failed to load font from storage: [${nameLower}]` });
+      subsetResults.push({ encoded: "", missingGlyphs: "", error: `Failed to load font from storage: [${displayName(nameLower)}]` });
       continue;
     }
 

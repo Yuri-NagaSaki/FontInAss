@@ -121,7 +121,7 @@ const addFiles = async (fileList: FileList | File[]) => {
 };
 
 const retryFailed = async () => {
-  const failed = files.value.filter(f => f.code === null || f.code >= 400);
+  const failed = files.value.filter(f => f.code === null || f.code >= 300);
   if (failed.length === 0) { toast.info(t("noFailed")); return; }
   failed.forEach(f => { f.status = t("statusRetrying"); });
   await runWithConcurrency(failed.map(e => () => processFile(e)));
@@ -133,7 +133,7 @@ const removeAll = () => { files.value = []; };
 
 // ─── Download ──────────────────────────────────────────────────────────────────
 const canDownload = computed(() => files.value.some(f => f.resultBytes));
-const hasFailed = computed(() => files.value.some(f => f.code === null || f.code >= 400));
+const hasFailed = computed(() => files.value.some(f => f.code === null || f.code >= 300));
 
 const downloadAll = async () => {
   const ready = files.value.filter(f => f.resultBytes);
@@ -203,7 +203,7 @@ const formatBytes = (n: number) =>
 
 const processingCount = computed(() => files.value.filter(f => f.code === null).length);
 const successCount    = computed(() => files.value.filter(f => f.code === 200).length);
-const failedCount     = computed(() => files.value.filter(f => f.code !== null && f.code >= 400).length);
+const failedCount     = computed(() => files.value.filter(f => f.code !== null && f.code >= 300).length);
 const warnCount       = computed(() => files.value.filter(f => f.code === 201).length);
 
 // Message severity helper
@@ -219,6 +219,33 @@ const toggleMessages = (key: string) => {
   const s = new Set(expandedMessages.value);
   if (s.has(key)) s.delete(key); else s.add(key);
   expandedMessages.value = s;
+};
+
+interface ParsedMessage {
+  type: 'missing-font' | 'missing-glyphs' | 'other';
+  fontName?: string;
+  raw: string;
+}
+
+const parseMessage = (msg: string): ParsedMessage => {
+  const fontMatch = msg.match(/^Missing font:\s*\[(.+)\]$/);
+  if (fontMatch) return { type: 'missing-font', fontName: fontMatch[1], raw: msg };
+  const glyphMatch = msg.match(/^Missing glyphs:\s*(.+)$/);
+  if (glyphMatch) return { type: 'missing-glyphs', raw: msg };
+  return { type: 'other', raw: msg };
+};
+
+const parsedMessages = (entry: FileEntry) => entry.messages.map(parseMessage);
+
+const missingFontCount = (entry: FileEntry) =>
+  entry.messages.filter(m => m.startsWith('Missing font:')).length;
+
+const summaryText = (entry: FileEntry) => {
+  const mfc = missingFontCount(entry);
+  if (mfc > 0 && mfc === entry.messages.length) {
+    return locale.value.startsWith('zh') ? `${mfc} 个字体未找到` : `${mfc} missing font${mfc > 1 ? 's' : ''}`;
+  }
+  return entry.messages[0];
 };
 </script>
 
@@ -302,7 +329,7 @@ const toggleMessages = (key: string) => {
             'bg-white border-sakura-100':      entry.code === null,
             'bg-mint-50/60 border-mint-200':   entry.code === 200,
             'bg-amber-50/60 border-amber-200': entry.code === 201,
-            'bg-rose-50/60 border-rose-200':   entry.code !== null && entry.code >= 400,
+            'bg-rose-50/60 border-rose-200':   entry.code !== null && entry.code !== 200 && entry.code !== 201,
           }"
         >
           <!-- Main row -->
@@ -313,7 +340,7 @@ const toggleMessages = (key: string) => {
                 'bg-sakura-100 text-sakura-400': entry.code === null,
                 'bg-mint-100 text-mint-600':     entry.code === 200,
                 'bg-amber-100 text-amber-500':   entry.code === 201,
-                'bg-rose-100 text-rose-500':     entry.code !== null && entry.code >= 400,
+                'bg-rose-100 text-rose-500':     entry.code !== null && entry.code !== 200 && entry.code !== 201,
               }"
             >
               <Loader2 v-if="entry.code === null" class="w-4 h-4 animate-spin-slow" />
@@ -345,7 +372,7 @@ const toggleMessages = (key: string) => {
           <div v-if="entry.messages.length > 0" class="border-t" :class="{
             'border-mint-200/50':   entry.code === 200,
             'border-amber-200/60':  entry.code === 201,
-            'border-rose-200/60':   entry.code !== null && entry.code >= 400,
+            'border-rose-200/60':   entry.code !== null && entry.code !== 200 && entry.code !== 201,
             'border-sakura-100/50': entry.code === null,
           }">
             <!-- Summary bar (always visible) -->
@@ -356,40 +383,62 @@ const toggleMessages = (key: string) => {
               <component :is="getMsgIcon(entry.code)" class="w-3.5 h-3.5 shrink-0" :class="{
                 'text-mint-600':  entry.code === 200,
                 'text-amber-500': entry.code === 201,
-                'text-rose-500':  entry.code !== null && entry.code >= 400,
+                'text-rose-500':  entry.code !== null && entry.code !== 200 && entry.code !== 201,
                 'text-sakura-400 animate-spin-slow': entry.code === null,
               }" />
-              <!-- Show the first message inline as a preview -->
-              <span class="flex-1 text-xs truncate font-mono" :class="{
+              <span class="flex-1 text-xs truncate" :class="{
                 'text-mint-700':  entry.code === 200,
                 'text-amber-700': entry.code === 201,
-                'text-rose-700':  entry.code !== null && entry.code >= 400,
+                'text-rose-700':  entry.code !== null && entry.code !== 200 && entry.code !== 201,
                 'text-ink-500':   entry.code === null,
-              }">{{ entry.messages[0] }}</span>
+              }">{{ summaryText(entry) }}</span>
               <span v-if="entry.messages.length > 1" class="shrink-0 text-xs text-ink-400">
-                +{{ entry.messages.length - 1 }}
+                {{ entry.messages.length }} {{ locale.startsWith('zh') ? '条消息' : 'messages' }}
               </span>
               <Info class="w-3.5 h-3.5 shrink-0 text-ink-300 transition-transform duration-200" :class="expandedMessages.has(entry.key) ? 'rotate-180' : ''" />
             </button>
 
             <!-- Expanded messages list -->
-            <div v-if="expandedMessages.has(entry.key)" class="px-4 pb-3 space-y-1.5 animate-fade-in">
-              <div
-                v-for="(msg, i) in entry.messages"
-                :key="i"
-                class="group flex items-start gap-2 px-3 py-2 rounded-xl text-xs font-mono leading-relaxed"
-                :class="{
-                  'bg-mint-50 text-mint-800':   entry.code === 200,
-                  'bg-amber-50 text-amber-800': entry.code === 201,
-                  'bg-rose-50 text-rose-800':   entry.code !== null && entry.code >= 400,
-                  'bg-sakura-50 text-ink-600':  entry.code === null,
-                }"
-              >
-                <span class="opacity-40 shrink-0 select-none">{{ String(i+1).padStart(2, '0') }}.</span>
-                <span class="flex-1 break-all">{{ msg }}</span>
-                <button class="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-ink-400 hover:text-ink-700" @click="copyMsg(msg)">
-                  <Copy class="w-3.5 h-3.5" />
-                </button>
+            <div v-if="expandedMessages.has(entry.key)" class="px-4 pb-3 animate-fade-in">
+              <!-- Missing fonts grid -->
+              <div v-if="missingFontCount(entry) > 0" class="mb-2">
+                <p class="text-[11px] text-ink-400 mb-2 font-medium uppercase tracking-wider">
+                  {{ locale.startsWith('zh') ? '缺少字体' : 'Missing Fonts' }}
+                </p>
+                <div class="flex flex-wrap gap-1.5">
+                  <span
+                    v-for="pm in parsedMessages(entry).filter(m => m.type === 'missing-font')"
+                    :key="pm.fontName"
+                    class="group inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-colors"
+                    :class="entry.code === 300
+                      ? 'bg-rose-100/80 text-rose-700 hover:bg-rose-200/80'
+                      : 'bg-amber-100/80 text-amber-700 hover:bg-amber-200/80'"
+                    @click="copyMsg(pm.fontName!)"
+                  >
+                    <XCircle class="w-3 h-3 shrink-0 opacity-50" />
+                    {{ pm.fontName }}
+                    <Copy class="w-3 h-3 shrink-0 opacity-0 group-hover:opacity-60 transition-opacity" />
+                  </span>
+                </div>
+              </div>
+              <!-- Other messages -->
+              <div v-if="parsedMessages(entry).some(m => m.type !== 'missing-font')" class="space-y-1.5" :class="{ 'mt-2 pt-2 border-t border-ink-100': missingFontCount(entry) > 0 }">
+                <div
+                  v-for="(pm, i) in parsedMessages(entry).filter(m => m.type !== 'missing-font')"
+                  :key="i"
+                  class="group flex items-start gap-2 px-3 py-2 rounded-xl text-xs font-mono leading-relaxed"
+                  :class="{
+                    'bg-mint-50 text-mint-800':   entry.code === 200,
+                    'bg-amber-50 text-amber-800': entry.code === 201,
+                    'bg-rose-50 text-rose-800':   entry.code !== null && entry.code !== 200 && entry.code !== 201,
+                    'bg-sakura-50 text-ink-600':  entry.code === null,
+                  }"
+                >
+                  <span class="flex-1 break-all">{{ pm.raw }}</span>
+                  <button class="opacity-0 group-hover:opacity-100 transition-opacity shrink-0 text-ink-400 hover:text-ink-700" @click="copyMsg(pm.raw)">
+                    <Copy class="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>

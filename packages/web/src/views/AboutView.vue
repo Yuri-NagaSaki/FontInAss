@@ -155,7 +155,7 @@ const { t } = useI18n();
               rel="noopener"
               class="group flex items-center gap-3 p-3 rounded-xl hover:bg-ink-50 transition-colors duration-150"
             >
-              <img src="https://catcat.blog/favicon/favicon.ico" alt="猫猫博客" class="w-8 h-8 rounded-lg shrink-0 object-contain" />
+              <img src="https://catcat.blog/favicon/avatar-256.avif" alt="猫猫博客" class="w-8 h-8 rounded-lg shrink-0 object-contain" />
               <div class="min-w-0 flex-1">
                 <p class="text-sm font-medium text-ink-800">猫猫博客</p>
                 <p class="text-xs text-ink-400 font-mono truncate">catcat.blog</p>
