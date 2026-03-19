@@ -1,0 +1,20 @@
+services:
+  fontinass:
+    build: .
+    container_name: fontinass-local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3300:3000"
+    volumes:
+      # Mount your font directory here (fonts go in ./fonts on host)
+      - ./fonts:/app/fonts
+      # Persist the SQLite database
+      - ./data:/app/data
+    environment:
+      - PORT=3000
+      - FONT_DIR=/app/fonts
+      - DB_PATH=/app/data/fonts.db
+      - API_KEY=${API_KEY:-}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - SUBSET_CONCURRENCY=${SUBSET_CONCURRENCY:-5}
+      - LOG_LEVEL=${LOG_LEVEL:-info}

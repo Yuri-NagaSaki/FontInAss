@@ -1,0 +1,40 @@
+# Dependencies
+**/node_modules
+**/.pnp
+**/.pnp.js
+
+# Build outputs
+**/dist
+**/build
+
+# Font files (mount as volume instead)
+fonts/
+server/fonts/
+
+# Database files (mount as volume instead)
+server/data/
+data/
+
+# Bun lock (let Docker install fresh)
+**/bun.lockb
+bun.lock
+
+# Environment files (secrets)
+.env
+server/.env
+
+# Git / Editor
+.git
+.gitignore
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Docker build context
+Dockerfile
+docker-compose.yml
+README.md

@@ -1,0 +1,212 @@
+@import "tailwindcss";
+
+/* ─── Sakura × Digital Design System ─────────────────────────────────────── */
+
+@theme {
+  /* Sakura Pink scale */
+  --color-sakura-50:  oklch(98.5% 0.008 355);
+  --color-sakura-100: oklch(95%   0.025 352);
+  --color-sakura-200: oklch(89%   0.055 350);
+  --color-sakura-300: oklch(81%   0.110 348);
+  --color-sakura-400: oklch(72%   0.175 347);
+  --color-sakura-500: oklch(63%   0.210 345);
+  --color-sakura-600: oklch(55%   0.195 343);
+  --color-sakura-700: oklch(44%   0.160 342);
+
+  /* Sky Blue scale */
+  --color-sky-50:  oklch(97%  0.015 222);
+  --color-sky-100: oklch(92%  0.040 222);
+  --color-sky-200: oklch(84%  0.085 222);
+  --color-sky-300: oklch(74%  0.130 220);
+  --color-sky-400: oklch(64%  0.160 218);
+  --color-sky-500: oklch(55%  0.170 216);
+
+  /* Soft Green (success) */
+  --color-mint-50:  oklch(96%  0.025 155);
+  --color-mint-100: oklch(91%  0.050 155);
+  --color-mint-200: oklch(84%  0.080 153);
+  --color-mint-300: oklch(76%  0.110 152);
+  --color-mint-400: oklch(68%  0.140 152);
+  --color-mint-500: oklch(60%  0.140 151);
+  --color-mint-600: oklch(52%  0.140 150);
+  --color-mint-700: oklch(43%  0.130 150);
+
+  /* Warm Rose (error) */
+  --color-rose-50:  oklch(97%  0.020  20);
+  --color-rose-100: oklch(93%  0.040  20);
+  --color-rose-200: oklch(87%  0.070  20);
+  --color-rose-400: oklch(65%  0.190  20);
+  --color-rose-500: oklch(57%  0.200  20);
+  --color-rose-600: oklch(50%  0.195  20);
+
+  /* Amber (warning) */
+  --color-amber-50:  oklch(97%  0.030  75);
+  --color-amber-100: oklch(93%  0.065  75);
+  --color-amber-200: oklch(87%  0.095  72);
+  --color-amber-400: oklch(75%  0.150  70);
+
+  /* Ink (text) — pink-tinted neutrals */
+  --color-ink-950: oklch(18%  0.020 355);
+  --color-ink-800: oklch(30%  0.018 355);
+  --color-ink-600: oklch(48%  0.015 355);
+  --color-ink-400: oklch(65%  0.010 355);
+  --color-ink-200: oklch(84%  0.008 355);
+  --color-ink-100: oklch(92%  0.006 355);
+  --color-ink-50:  oklch(97%  0.005 355);
+
+  /* Surfaces */
+  --color-surface:       oklch(100%  0     0);
+  --color-surface-raised: oklch(99%  0.004 355);
+  --color-bg:            oklch(98.5% 0.008 355);
+
+  /* Typography */
+  --font-display: "Outfit Variable", "Outfit", ui-sans-serif, system-ui, sans-serif;
+  --font-body:    "Plus Jakarta Sans Variable", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+
+  /* Easing */
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
+  --ease-out-expo:  cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out:    cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Shadows */
+  --shadow-sm:  0 1px 4px oklch(70% 0.20 350 / 0.08);
+  --shadow-md:  0 4px 16px oklch(70% 0.20 350 / 0.12);
+  --shadow-lg:  0 8px 32px oklch(70% 0.20 350 / 0.16);
+  --shadow-xl:  0 16px 48px oklch(70% 0.20 350 / 0.18);
+}
+
+/* ─── Base Reset ─────────────────────────────────────────────────────────── */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-bg);
+  color: var(--color-ink-950);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-sakura-200);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-sakura-300); }
+
+/* ─── Focus ring ─────────────────────────────────────────────────────────── */
+
+:focus-visible {
+  outline: 2px solid var(--color-sakura-400);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ─── Animations ─────────────────────────────────────────────────────────── */
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in-fast {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes petal-drift {
+  0%   { transform: translateY(-20px) rotate(0deg);   opacity: 0; }
+  10%  { opacity: 1; }
+  90%  { opacity: 0.6; }
+  100% { transform: translateY(120vh) rotate(720deg); opacity: 0; }
+}
+
+.animate-fade-in       { animation: fade-in      0.4s var(--ease-out-quart) both; }
+.animate-fade-in-fast  { animation: fade-in-fast 0.2s var(--ease-out-quart) both; }
+.animate-slide-down    { animation: slide-down   0.3s var(--ease-out-quart) both; }
+.animate-scale-in      { animation: scale-in     0.25s var(--ease-out-quart) both; }
+.animate-spin-slow     { animation: spin-slow    1.2s linear infinite; }
+.animate-petal-drift   { animation: petal-drift  6s ease-in-out infinite; }
+
+/* Staggered list items */
+.stagger > *:nth-child(1)  { animation-delay: 0ms; }
+.stagger > *:nth-child(2)  { animation-delay: 40ms; }
+.stagger > *:nth-child(3)  { animation-delay: 80ms; }
+.stagger > *:nth-child(4)  { animation-delay: 120ms; }
+.stagger > *:nth-child(5)  { animation-delay: 160ms; }
+.stagger > *:nth-child(n+6){ animation-delay: 200ms; }
+
+/* ─── Utility classes ────────────────────────────────────────────────────── */
+
+.font-display { font-family: var(--font-display); }
+
+/* Subtle paper texture — pink-tinted background */
+.bg-page { background-color: var(--color-bg); }
+
+/* Card */
+.card {
+  background: var(--color-surface);
+  border-radius: 18px;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-sakura-100);
+}
+.card-raised {
+  background: var(--color-surface-raised);
+  border-radius: 18px;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--color-sakura-100);
+}
+
+/* Sakura gradient text */
+.text-sakura-gradient {
+  background: linear-gradient(135deg, var(--color-sakura-500), var(--color-sky-400));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Dashed upload zone */
+.drop-zone {
+  border: 2px dashed var(--color-sakura-200);
+  border-radius: 18px;
+  transition: border-color 0.2s, background-color 0.2s, transform 0.2s var(--ease-out-quart);
+}
+.drop-zone:hover, .drop-zone.active {
+  border-color: var(--color-sakura-400);
+  background-color: var(--color-sakura-50);
+  transform: scale(1.005);
+}
+
+/* Smooth grid transition for accordion/collapse */
+.accordion-grid {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s var(--ease-in-out);
+}
+.accordion-grid.open {
+  grid-template-rows: 1fr;
+}
+.accordion-inner { overflow: hidden; }

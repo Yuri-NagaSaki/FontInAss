@@ -1,0 +1,41 @@
+# .gitignore for FontInAss-Local
+
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+
+# Bun lock
+bun.lockb
+
+# Database (persists outside repo)
+server/data/
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Font files (too large for git)
+server/fonts/
+fonts/
+
+# Environment files (contain secrets)
+.env
+.env.*
+!.env.example
+server/.env
+!server/.env.example
+
+# Editor / OS files
+.DS_Store
+.vscode/
+.idea/
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
