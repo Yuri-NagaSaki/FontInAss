@@ -11,7 +11,8 @@
 
 import * as opentype from "opentype.js";
 import { getDb, lookupFontsByNames, runBatch, type FontLookupRow } from "../db.js";
-import { getFile } from "../storage.js";
+import { getFile, putFile } from "../storage.js";
+import { log } from "../config.js";
 
 // ─── Font lookup ──────────────────────────────────────────────────────────────
 
@@ -20,6 +21,37 @@ export interface FontLookupResult {
   fontIndex: number;
   weight: number;
   italic: boolean;
+}
+
+// Weight suffix → numeric weight mapping (longest/most-specific first)
+const WEIGHT_SUFFIXES: Array<[string, number]> = [
+  ["extra light",  200], ["extra-light",  200], ["ultra light", 200], ["ultra-light", 200],
+  ["semi bold",    600], ["semi-bold",    600], ["demi bold",   600], ["demi-bold",   600],
+  ["extra bold",   800], ["extra-bold",   800], ["ultra bold",  800], ["ultra-bold",  800],
+  ["extralight",   200], ["ultralight",   200],
+  ["semibold",     600], ["demibold",     600],
+  ["extrabold",    800], ["ultrabold",    800],
+  ["hairline",     100], ["thin",         100],
+  ["light",        300],
+  ["regular",      400], ["normal",       400], ["book",        400],
+  ["medium",       500],
+  ["bold",         700],
+  ["black",        900], ["heavy",        900],
+];
+
+/**
+ * Try to strip a known weight suffix from a lowercased font name.
+ * Returns the base family name + inferred weight, or null if no suffix matched.
+ * e.g. "source han sans tc medium" → { base: "source han sans tc", weight: 500 }
+ */
+function stripWeightSuffix(nameLower: string): { base: string; weight: number } | null {
+  for (const [suffix, weight] of WEIGHT_SUFFIXES) {
+    if (nameLower.endsWith(" " + suffix)) {
+      const base = nameLower.slice(0, nameLower.length - suffix.length - 1).trimEnd();
+      if (base.length > 0) return { base, weight };
+    }
+  }
+  return null;
 }
 
 function pickBest(
@@ -49,7 +81,9 @@ function pickBest(
 
 /**
  * Batch-lookup fonts — single DB call for all needed names.
- * Same signature as the Worker version for drop-in compatibility.
+ * First attempts exact name match; falls back to stripping weight suffixes
+ * (e.g. "source han sans tc medium" → "source han sans tc" w/ weight=500)
+ * so ASS files using weight-in-name style still find indexed fonts.
  */
 export function lookupFontsBatch(
   requests: Array<{ key: string; nameLower: string; targetWeight: number; targetItalic: boolean }>,
@@ -57,6 +91,7 @@ export function lookupFontsBatch(
   const resultMap = new Map<string, FontLookupResult | null>();
   if (requests.length === 0) return resultMap;
 
+  // ── Pass 1: exact name lookup ─────────────────────────────────────────────
   const uniqueNames = [...new Set(requests.map(r => r.nameLower))];
   const rows = lookupFontsByNames(uniqueNames);
 
@@ -75,15 +110,61 @@ export function lookupFontsBatch(
     );
   }
 
+  // ── Pass 2: weight-suffix fallback for unmatched names ────────────────────
+  const unmatched = requests.filter(r => resultMap.get(r.key) === null);
+  if (unmatched.length > 0) {
+    const fallbackLookup = new Map<string, { base: string; weight: number }>();
+    const fallbackNames: string[] = [];
+
+    for (const req of unmatched) {
+      const stripped = stripWeightSuffix(req.nameLower);
+      if (stripped && !fallbackLookup.has(req.nameLower)) {
+        fallbackLookup.set(req.nameLower, stripped);
+        fallbackNames.push(stripped.base);
+      }
+    }
+
+    if (fallbackNames.length > 0) {
+      const fbRows = lookupFontsByNames([...new Set(fallbackNames)]);
+      const fbByName = new Map<string, FontLookupRow[]>();
+      for (const row of fbRows) {
+        const arr = fbByName.get(row.name_lower) ?? [];
+        arr.push(row);
+        fbByName.set(row.name_lower, arr);
+      }
+
+      for (const req of unmatched) {
+        const stripped = fallbackLookup.get(req.nameLower);
+        if (!stripped) continue;
+        const variants = fbByName.get(stripped.base);
+        if (variants?.length) {
+          // Use inferred weight from suffix rather than ASS style weight
+          resultMap.set(req.key, pickBest(variants, stripped.weight, req.targetItalic));
+        }
+      }
+    }
+  }
+
   return resultMap;
 }
 
 /**
  * Load font bytes from local filesystem.
- * key = relative path within fontDir (same concept as R2 key).
+ * Falls back to stripping a leading "r2/" prefix for databases migrated
+ * from the Cloudflare R2 version where keys had that prefix.
  */
-export async function loadFontBytes(key: string): Promise<Uint8Array | null> {
-  return getFile(key);
+export async function loadFontBytes(key: string): Promise<{ bytes: Uint8Array; resolvedKey: string } | null> {
+  let bytes = await getFile(key);
+  if (bytes) return { bytes, resolvedKey: key };
+
+  // Migration fallback: strip "r2/" prefix (keys from CF R2 version)
+  if (key.startsWith("r2/")) {
+    const candidate = key.slice(3);
+    bytes = await getFile(candidate);
+    if (bytes) return { bytes, resolvedKey: candidate };
+  }
+
+  return null;
 }
 
 // ─── Font metadata parsing ─────────────────────────────────────────────────────
@@ -250,23 +331,33 @@ export interface IndexResult {
 /**
  * Index a font file — write bytes to storage and insert DB rows.
  * If existingKey is provided, only DB rows are written (file already on disk).
+ * If the font cannot be parsed by opentype.js (e.g. old cmap format),
+ * a fallback face using the filename as family name is used so the entry
+ * still lands in the DB and won't be re-attempted on every scan.
  */
 export async function indexFont(
   filename: string,
   bytes: Uint8Array,
   existingKey?: string,
 ): Promise<IndexResult> {
-  const faces = parseFontMetadata(bytes);
+  let faces = parseFontMetadata(bytes);
+
   if (faces.length === 0) {
-    return { filename, id: "", faces: 0, error: "Could not parse font metadata" };
+    // Fallback: use filename (without extension) as the family name.
+    // This ensures unparseable fonts are still stored and searchable by filename.
+    const baseName = filename.replace(/\.(ttf|otf|ttc|otc)$/i, "").trim();
+    if (!baseName) {
+      return { filename, id: "", faces: 0, error: "Could not parse font metadata" };
+    }
+    log("warn", `[indexFont] ${filename}: parse failed, indexing with filename as family name`);
+    faces = [{ index: 0, familyNames: [baseName], weight: 400, bold: false, italic: false }];
   }
 
   const fileId = crypto.randomUUID();
   const r2Key = existingKey ?? `fonts/${fileId}/${filename}`;
 
-  // Write bytes to disk only if not already there
+  // Write bytes to disk only if not already there (scan-local passes existingKey since file IS on disk)
   if (!existingKey) {
-    const { putFile } = await import("../storage.js");
     await putFile(r2Key, bytes);
   }
 

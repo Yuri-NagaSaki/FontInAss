@@ -144,6 +144,8 @@ export default {
   warned: "warned",
   // Nav
   home: "Home",
+  comments: "Comments",
+  commentsDesc: "Leave your thoughts, suggestions, or feedback.",
   uploadDir: "Upload Directory",
   files: "files",
   // Settings panel

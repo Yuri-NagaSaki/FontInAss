@@ -24,6 +24,7 @@ const router = createRouter({
     { path: "/subset", component: () => import("./views/SubsetView.vue") },
     { path: "/fonts", component: () => import("./views/FontsView.vue") },
     { path: "/about", component: () => import("./views/AboutView.vue") },
+    { path: "/comments", component: () => import("./views/CommentsView.vue") },
   ],
 });
 

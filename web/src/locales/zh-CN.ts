@@ -144,6 +144,8 @@ export default {
   warned: "含警告",
   // Nav
   home: "首页",
+  comments: "评论区",
+  commentsDesc: "留下你的想法、建议或反馈，欢迎交流。",
   uploadDir: "上传目录",
   files: "个文件",
   // Settings panel

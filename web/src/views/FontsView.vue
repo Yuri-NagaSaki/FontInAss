@@ -9,10 +9,10 @@ import {
 } from "lucide-vue-next";
 import {
   listFonts, uploadFonts, deleteFont, deleteFontsBatch,
-  browseR2, indexR2Keys, listR2Keys, getFontStats, scanLocalFonts,
+  browseR2, indexR2Keys, listR2Keys, getFontStats, scanLocalFonts, repairFontKeys,
   getApiKey, setApiKey,
 } from "../api/client";
-import type { FontItem, BrowseFile, FontStats, ScanLocalResult } from "../api/client";
+import type { FontItem, BrowseFile, FontStats, ScanLocalResult, RepairKeysResult } from "../api/client";
 import KButton from "../components/KButton.vue";
 import KInput from "../components/KInput.vue";
 import KBadge from "../components/KBadge.vue";
@@ -164,7 +164,7 @@ const indexAllUnder = async (prefix: string) => {
     const allKeys: string[] = [];
     let cursor: string | undefined;
     do {
-      const res = await listR2Keys(prefix, cursor, 500);
+      const res = await listR2Keys(prefix, cursor, 5000);
       allKeys.push(...res.keys.map(k => k.key));
       prog.total = allKeys.length;
       cursor = res.nextCursor ?? undefined;
@@ -410,6 +410,29 @@ const doScanLocal = async () => {
   } catch (e) {
     scanLocalError.value = e instanceof Error ? e.message : String(e);
     scanLocalState.value = "idle";
+  }
+};
+
+// ── Repair Keys (fix stale R2-migrated paths) ─────────────────────────────────
+const repairState = ref<"idle" | "running" | "done">("idle");
+const repairResult = ref<RepairKeysResult | null>(null);
+const repairError = ref<string | null>(null);
+
+const doRepairKeys = async () => {
+  if (repairState.value === "running") return;
+  repairState.value = "running";
+  repairResult.value = null;
+  repairError.value = null;
+  try {
+    const result = await repairFontKeys();
+    repairResult.value = result;
+    repairState.value = "done";
+    loadFontList(true);
+    loadStats();
+    setTimeout(() => { repairState.value = "idle"; }, 8000);
+  } catch (e) {
+    repairError.value = e instanceof Error ? e.message : String(e);
+    repairState.value = "idle";
   }
 };
 
@@ -753,7 +776,7 @@ onBeforeUnmount(() => {
             class="flex items-center gap-2 text-sm text-mint-600"
           >
             <CheckCircle2 class="w-4 h-4 shrink-0" />
-            <span>新增 {{ scanLocalResult.indexed }} 个，跳过 {{ scanLocalResult.skipped }} 个，共 {{ scanLocalResult.total }} 个字体文件</span>
+            <span>新增 {{ scanLocalResult.indexed }} 个，跳过 {{ scanLocalResult.skipped }} 个<template v-if="scanLocalResult.purged">，清理失效 {{ scanLocalResult.purged }} 个</template>，共 {{ scanLocalResult.total }} 个字体文件</span>
           </div>
           <div v-else-if="scanLocalError" key="err" class="text-sm text-rose-500 flex items-center gap-1.5">
             <span>扫描失败: {{ scanLocalError }}</span>
@@ -771,6 +794,42 @@ onBeforeUnmount(() => {
           <Loader2 v-if="scanLocalState === 'running'" class="w-3.5 h-3.5 animate-spin" />
           <Search v-else class="w-3.5 h-3.5" />
           {{ scanLocalState === 'running' ? '扫描中…' : '扫描并索引' }}
+        </KButton>
+      </div>
+
+      <!-- Repair Keys — fix stale paths after migrating from R2 -->
+      <div class="card p-5 flex flex-col gap-3 border-dashed">
+        <div class="flex items-center gap-2.5">
+          <RefreshCcw class="w-4 h-4 text-amber-400" />
+          <h3 class="font-display font-semibold text-ink-800 text-sm">修复索引路径</h3>
+        </div>
+        <p class="text-sm text-ink-500">检测并修复数据库中的失效路径（如从 Cloudflare R2 迁移后残留的 <code class="text-xs bg-ink-100 px-1.5 py-0.5 rounded font-mono">r2/</code> 前缀）。会自动尝试重新定位文件，无法找到的条目将被删除。</p>
+
+        <Transition name="chip-text" mode="out-in">
+          <div
+            v-if="repairState === 'done' && repairResult"
+            key="done"
+            class="flex items-center gap-2 text-sm text-mint-600"
+          >
+            <CheckCircle2 class="w-4 h-4 shrink-0" />
+            <span>修复 {{ repairResult.updated }} 个，删除失效 {{ repairResult.deleted }} 个，正常 {{ repairResult.ok }} 个，共 {{ repairResult.total }} 个</span>
+          </div>
+          <div v-else-if="repairError" key="err" class="text-sm text-rose-500 flex items-center gap-1.5">
+            <span>修复失败: {{ repairError }}</span>
+          </div>
+          <span v-else key="spacer" />
+        </Transition>
+
+        <KButton
+          variant="secondary"
+          size="sm"
+          :disabled="repairState === 'running'"
+          class="w-fit"
+          @click="doRepairKeys"
+        >
+          <Loader2 v-if="repairState === 'running'" class="w-3.5 h-3.5 animate-spin" />
+          <RefreshCcw v-else class="w-3.5 h-3.5" />
+          {{ repairState === 'running' ? '修复中…' : '修复索引路径' }}
         </KButton>
       </div>
     </div>

@@ -140,8 +140,15 @@ export async function uploadFonts(
         headers: { ...authHeaders(), ...extraHeaders },
         body: form,
       });
-      const json = await res.json() as { results: UploadResult[] };
-      results.push(...(json.results ?? []));
+      if (!res.ok) {
+        // Parse error body — server may return { error } or { results: [{error}] }
+        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+        const errMsg = (body.error as string) || `Upload failed (HTTP ${res.status})`;
+        results.push({ filename: f.name, id: "", faces: 0, error: errMsg });
+      } else {
+        const json = await res.json() as { results: UploadResult[] };
+        results.push(...(json.results ?? []));
+      }
     } catch (e) {
       results.push({ filename: f.name, id: "", faces: 0, error: String(e) });
     }
@@ -225,11 +232,30 @@ export interface ScanLocalResult {
   total: number;
   indexed: number;
   skipped: number;
+  purged: number;
   errors: string[];
 }
 
 export async function scanLocalFonts(): Promise<ScanLocalResult> {
   const res = await fetch(`${BASE}/api/fonts/scan-local`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+// ─── Local-only: Repair stale DB keys (e.g. migrated from R2) ─────────────────
+
+export interface RepairKeysResult {
+  total: number;
+  ok: number;
+  updated: number;
+  deleted: number;
+}
+
+export async function repairFontKeys(): Promise<RepairKeysResult> {
+  const res = await fetch(`${BASE}/api/fonts/repair-keys`, {
     method: "POST",
     headers: authHeaders(),
   });

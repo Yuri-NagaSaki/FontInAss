@@ -164,3 +164,18 @@ export function deleteFontsByIds(ids: string[]): string[] {
   tx();
   return r2Keys;
 }
+
+/** Return all font_files rows (id + r2_key) for repair operations. */
+export function getAllFontFileEntries(): { id: string; r2_key: string }[] {
+  return getDb()
+    .prepare<{ id: string; r2_key: string }, []>("SELECT id, r2_key FROM font_files")
+    .all();
+}
+
+/** Update a single font_files r2_key by id. Returns true if row was updated. */
+export function updateFontFileKey(id: string, newKey: string): boolean {
+  const result = getDb()
+    .prepare("UPDATE font_files SET r2_key = ? WHERE id = ?")
+    .run(newKey, id);
+  return (result.changes ?? 0) > 0;
+}

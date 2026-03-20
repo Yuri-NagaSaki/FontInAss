@@ -17,4 +17,4 @@ services:
       - API_KEY=${API_KEY:-}
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
       - SUBSET_CONCURRENCY=${SUBSET_CONCURRENCY:-5}
-      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - LOG_LEVEL=${LOG_LEVEL:-debug}

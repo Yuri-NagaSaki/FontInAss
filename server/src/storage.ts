@@ -25,9 +25,11 @@ function toKey(nativePath: string): string {
 
 function absolutePath(key: string): string {
   const native = toNativeKey(key);
-  // Security: block directory traversal
   const abs = join(config.fontDir, native);
-  if (!abs.startsWith(config.fontDir)) {
+  // Ensure the resolved path is strictly inside fontDir — prevent traversal attacks
+  // where /app/fonts would incorrectly match /app/fontsXYZ
+  const base = config.fontDir.endsWith(sep) ? config.fontDir : config.fontDir + sep;
+  if (abs !== config.fontDir && !abs.startsWith(base)) {
     throw new Error(`Path traversal blocked: ${key}`);
   }
   return abs;

@@ -264,12 +264,15 @@ async function processSubtitle(
   log("debug", `[subset:${filename}] starting subset of ${fontEntries.length} font variant(s) across ${byFile.size} file(s)…`);
   for (const [r2Key, variants] of byFile) {
     const tLoad = Date.now();
-    const fontBytes = await loadFontBytes(r2Key);
-    log("debug", `[subset:${filename}]   loaded ${r2Key} → ${fontBytes ? `${(fontBytes.length/1024/1024).toFixed(2)} MB` : "null"} in ${Date.now()-tLoad}ms`);
+    const loaded = await loadFontBytes(r2Key);
+    const fontBytes = loaded?.bytes ?? null;
+    const resolvedKey = loaded?.resolvedKey ?? r2Key;
+    log("debug", `[subset:${filename}]   loaded ${resolvedKey} → ${fontBytes ? `${(fontBytes.length/1024/1024).toFixed(2)} MB` : "null"} in ${Date.now()-tLoad}ms`);
 
     if (!fontBytes) {
+      log("warn", `[subset:${filename}] font file missing on disk: ${r2Key}`);
       for (const { key, nameLower } of variants) {
-        subsetResultMap.set(key, { encoded: "", missingGlyphs: "", error: `Failed to load font from storage: [${displayName(nameLower)}]` });
+        subsetResultMap.set(key, { encoded: "", missingGlyphs: "", error: `Failed to load font from storage: [${displayName(nameLower)}] — file not found at: ${r2Key}` });
       }
       continue;
     }

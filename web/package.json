@@ -12,6 +12,7 @@
     "@fontsource-variable/outfit": "^5.2.8",
     "@fontsource-variable/plus-jakarta-sans": "^5.2.8",
     "@vueuse/core": "^14.2.1",
+    "@waline/client": "^3.13.0",
     "clsx": "^2.1.1",
     "copy-to-clipboard": "^3.3.3",
     "file-saver": "^2.0.5",

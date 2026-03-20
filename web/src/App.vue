@@ -14,9 +14,10 @@ const route = useRoute();
 
 const currentPath = computed(() => route.path);
 const navItems = [
-  { path: "/",       labelKey: "home"   },
-  { path: "/subset", labelKey: "subset" },
-  { path: "/about",  labelKey: "about"  },
+  { path: "/",         labelKey: "home"     },
+  { path: "/subset",   labelKey: "subset"   },
+  { path: "/comments", labelKey: "comments" },
+  { path: "/about",    labelKey: "about"    },
 ];
 
 const isNavActive = (path: string) => {
@@ -92,6 +93,7 @@ const routeTitles: Record<string, string> = {
   "/subset": "字幕处理 · FontInAss",
   "/fonts": "字体管理 · FontInAss",
   "/about": "关于 · FontInAss",
+  "/comments": "评论区 · FontInAss",
 };
 watchEffect(() => {
   document.title = routeTitles[route.path] ?? "FontInAss";
