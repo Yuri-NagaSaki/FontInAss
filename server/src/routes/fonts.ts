@@ -12,13 +12,14 @@
  * GET  /api/fonts/list-keys    - Recursive flat key listing
  * POST /api/fonts/index-folder - Index fonts in a path
  * POST /api/fonts/scan-local   - Scan entire FONT_DIR and index all fonts (local-only)
+ * POST /api/fonts/repair-keys  - Fix stale DB entries (e.g. migrated from R2 with r2/ prefix)
  * GET  /api/fonts/stats        - Index statistics
  */
 
 import { Hono } from "hono";
-import { config } from "../config.js";
+import { config, log } from "../config.js";
 import { getDb, deleteFontsByIds, findExistingKeys } from "../db.js";
-import { browseLevel, listAllKeys, scanAllFonts, getFile, deleteFile } from "../storage.js";
+import { browseLevel, listAllKeys, scanAllFonts, getFile, fileExists, deleteFile, putFile } from "../storage.js";
 import { indexFont, parseFontMetadata } from "../lib/font-manager.js";
 
 const fonts = new Hono();
@@ -45,6 +46,7 @@ fonts.get("/stats", (c) => {
     const db = getDb();
     const total = (db.prepare<{ cnt: number }, []>("SELECT COUNT(*) as cnt FROM font_files").get())?.cnt ?? 0;
 
+    // Count indexed fonts per top-level folder from DB
     const allRows = db.prepare<{ r2_key: string }, []>("SELECT r2_key FROM font_files").all();
     const folderCounts: Record<string, number> = {};
     for (const row of allRows) {
@@ -53,11 +55,22 @@ fonts.get("/stats", (c) => {
       folderCounts[folder] = (folderCounts[folder] ?? 0) + 1;
     }
 
+    // Merge in filesystem directories so empty dirs (e.g. FounderTypeFonts with no binaries yet)
+    // are still visible in the stats with count=0
+    const { folders: fsDirs } = browseLevel("");
+    for (const dir of fsDirs) {
+      if (!(dir in folderCounts)) {
+        folderCounts[dir] = 0;
+      }
+    }
+
     const folders = Object.entries(folderCounts)
       .map(([prefix, count]) => ({ prefix, count }))
       .sort((a, b) => b.count - a.count);
 
-    return c.json({ total, folders });
+    return c.json({ total, folders }, 200, {
+      "Cache-Control": "no-cache, no-store",
+    });
   } catch (e) {
     return c.json({ total: 0, folders: [], error: String(e) }, 500);
   }
@@ -80,6 +93,8 @@ fonts.get("/browse", (c) => {
       files: files.map(f => ({ ...f, indexed: indexed.has(f.key) })),
       cursor: null,
       done: true,
+    }, 200, {
+      "Cache-Control": "no-cache, no-store",
     });
   } catch (e) {
     return c.json({ error: String(e) }, 500);
@@ -91,10 +106,16 @@ fonts.get("/browse", (c) => {
 fonts.get("/list-keys", (c) => {
   const prefix = c.req.query("prefix") ?? "";
   const limit = Math.min(5000, parseInt(c.req.query("limit") ?? "5000", 10));
+  const offset = Math.max(0, parseInt(c.req.query("cursor") ?? "0", 10));
 
   try {
-    const keys = listAllKeys(prefix).slice(0, limit);
-    return c.json({ keys, nextCursor: null, done: true });
+    const allKeys = listAllKeys(prefix);
+    const page = allKeys.slice(offset, offset + limit);
+    const nextOffset = offset + page.length;
+    const done = nextOffset >= allKeys.length;
+    return c.json({ keys: page, nextCursor: done ? null : String(nextOffset), done }, 200, {
+      "Cache-Control": "no-cache, no-store",
+    });
   } catch (e) {
     return c.json({ error: String(e) }, 500);
   }
@@ -136,7 +157,8 @@ fonts.post("/index-folder", async (c) => {
         const bytes = await getFile(obj.key);
         if (!bytes) throw new Error("File not found on disk");
         const filename = obj.key.split("/").pop() ?? obj.key;
-        await indexFont(filename, bytes, obj.key);
+        const result = await indexFont(filename, bytes, obj.key);
+        if (result.error) throw new Error(result.error);
       })
     );
     for (let j = 0; j < results.length; j++) {
@@ -168,7 +190,9 @@ fonts.post("/scan-local", async (c) => {
           const bytes = await getFile(obj.key);
           if (!bytes) throw new Error("File not found");
           const filename = obj.key.split("/").pop() ?? obj.key;
-          await indexFont(filename, bytes, obj.key);
+          const result = await indexFont(filename, bytes, obj.key);
+          // indexFont returns {error} instead of throwing on soft failures
+          if (result.error) throw new Error(result.error);
         })
       );
       for (let j = 0; j < results.length; j++) {
@@ -177,15 +201,120 @@ fonts.post("/scan-local", async (c) => {
       }
     }
 
+    // Purge orphaned DB entries — files that no longer exist on disk
+    const currentKeys = new Set(allFonts.map(f => f.key));
+    const db = getDb();
+    const allDbRows = db.prepare<{ id: string; r2_key: string }, []>(
+      "SELECT id, r2_key FROM font_files"
+    ).all();
+    const orphanIds = allDbRows
+      .filter(row => !currentKeys.has(row.r2_key))
+      .map(row => row.id);
+    if (orphanIds.length > 0) {
+      deleteFontsByIds(orphanIds);
+      log("info", `[scan-local] purged ${orphanIds.length} orphaned DB entries`);
+    }
+
     return c.json({
       total: allFonts.length,
       indexed,
       skipped,
+      purged: orphanIds.length,
       errors: errors.slice(0, 100),
     });
   } catch (e) {
     return c.json({ error: String(e) }, 500);
   }
+});
+
+// ─── Repair stale DB keys (e.g. migrated from Cloudflare R2) ─────────────────
+//
+// Fixes entries whose r2_key no longer resolves to a real file.
+// Tries stripping known legacy prefixes (r2/, fonts/<uuid>/) then searches
+// fontDir for a matching filename.  Updates the DB in-place; truly lost
+// entries are deleted so they don't pollute font-name lookups.
+
+fonts.post("/repair-keys", async (c) => {
+  const db = getDb();
+  const allRows = db.prepare<{ id: string; r2_key: string }, []>(
+    "SELECT id, r2_key FROM font_files"
+  ).all();
+
+  let ok = 0;
+  let updated = 0;
+  let deleted = 0;
+
+  // Build a map of basename → [key] from current fontDir for fallback search
+  const allLocalFonts = scanAllFonts();
+  const byBasename = new Map<string, string[]>();
+  for (const { key } of allLocalFonts) {
+    const base = key.split("/").pop()!.toLowerCase();
+    const arr = byBasename.get(base) ?? [];
+    arr.push(key);
+    byBasename.set(base, arr);
+  }
+
+  const updateStmt = db.prepare<unknown, [string, string]>(
+    "UPDATE font_files SET r2_key = ? WHERE id = ?"
+  );
+  const deleteStmt = db.prepare<unknown, [string]>(
+    "DELETE FROM font_files WHERE id = ?"
+  );
+  const existsStmt = db.prepare<{ cnt: number }, [string]>(
+    "SELECT COUNT(*) as cnt FROM font_files WHERE r2_key = ?"
+  );
+
+  const tx = db.transaction(() => {
+    for (const { id, r2_key } of allRows) {
+      // Already valid
+      if (fileExists(r2_key)) { ok++; continue; }
+
+      // Try known legacy prefix stripping
+      const candidates: string[] = [];
+
+      // Strip r2/ prefix (Cloudflare R2 migration)
+      if (r2_key.startsWith("r2/")) candidates.push(r2_key.slice(3));
+
+      // Strip fonts/<uuid>/ prefix (old upload path)
+      const uploadMatch = r2_key.match(/^fonts\/[0-9a-f-]{36}\/(.+)$/i);
+      if (uploadMatch) candidates.push(uploadMatch[1]);
+
+      // Search by filename anywhere under fontDir
+      const basename = r2_key.split("/").pop()!.toLowerCase();
+      const byName = byBasename.get(basename) ?? [];
+      candidates.push(...byName);
+
+      // Use the first candidate that resolves to a real file
+      const newKey = candidates.find(c => fileExists(c));
+      if (newKey && newKey !== r2_key) {
+        // If target key already exists in DB (e.g. scan-local already re-indexed it),
+        // just delete the stale entry rather than causing a UNIQUE conflict
+        const alreadyExists = (existsStmt.get(newKey)?.cnt ?? 0) > 0;
+        if (alreadyExists) {
+          deleteStmt.run(id);
+          log("info", `[repair-keys] removed duplicate stale entry: ${r2_key} (${newKey} already indexed)`);
+          deleted++;
+        } else {
+          updateStmt.run(newKey, id);
+          log("info", `[repair-keys] ${r2_key} → ${newKey}`);
+          updated++;
+        }
+      } else {
+        // Truly orphaned — delete so lookups don't return broken paths
+        deleteStmt.run(id);
+        log("warn", `[repair-keys] deleted orphan: ${r2_key}`);
+        deleted++;
+      }
+    }
+  });
+  tx();
+
+  return c.json({
+    total: allRows.length,
+    ok,
+    updated,
+    deleted,
+  });
 });
 
 // ─── List indexed fonts ───────────────────────────────────────────────────────
@@ -202,43 +331,48 @@ fonts.get("/", (c) => {
     let rows: unknown[];
 
     if (search) {
-      total = db.prepare<{ cnt: number }, [string]>(`
+      const pat = `%${search}%`;
+      // Search font family names AND filename — GROUP BY ff.id avoids duplicates for multi-face fonts
+      total = db.prepare<{ cnt: number }, [string, string]>(`
         SELECT COUNT(DISTINCT ff.id) as cnt
         FROM font_files ff
-        JOIN font_info fi ON fi.file_id = ff.id
-        JOIN font_names fn ON fn.font_info_id = fi.id
-        WHERE fn.name_lower LIKE ?
-      `).get(`%${search}%`)?.cnt ?? 0;
+        LEFT JOIN font_info fi ON fi.file_id = ff.id
+        LEFT JOIN font_names fn ON fn.font_info_id = fi.id
+        WHERE fn.name_lower LIKE ? OR LOWER(ff.filename) LIKE ?
+      `).get(pat, pat)?.cnt ?? 0;
 
       rows = db.prepare(`
-        SELECT DISTINCT ff.id, ff.filename, ff.size, ff.created_at,
+        SELECT ff.id, ff.filename, ff.size, ff.created_at,
                GROUP_CONCAT(DISTINCT fn.name_lower) as names,
-               fi.weight, fi.bold, fi.italic
+               MIN(fi.weight) as weight, MAX(fi.bold) as bold, MAX(fi.italic) as italic
         FROM font_files ff
-        JOIN font_info fi ON fi.file_id = ff.id
-        JOIN font_names fn ON fn.font_info_id = fi.id
-        WHERE fn.name_lower LIKE ?
-        GROUP BY ff.id, fi.id
+        LEFT JOIN font_info fi ON fi.file_id = ff.id
+        LEFT JOIN font_names fn ON fn.font_info_id = fi.id
+        WHERE fn.name_lower LIKE ? OR LOWER(ff.filename) LIKE ?
+        GROUP BY ff.id
         ORDER BY ff.created_at DESC
         LIMIT ? OFFSET ?
-      `).all(`%${search}%`, limit, offset);
+      `).all(pat, pat, limit, offset);
     } else {
       total = db.prepare<{ cnt: number }, []>("SELECT COUNT(*) as cnt FROM font_files").get()?.cnt ?? 0;
 
       rows = db.prepare(`
         SELECT ff.id, ff.filename, ff.size, ff.created_at,
                GROUP_CONCAT(DISTINCT fn.name_lower) as names,
-               fi.weight, fi.bold, fi.italic
+               MIN(fi.weight) as weight, MAX(fi.bold) as bold, MAX(fi.italic) as italic
         FROM font_files ff
         LEFT JOIN font_info fi ON fi.file_id = ff.id
         LEFT JOIN font_names fn ON fn.font_info_id = fi.id
-        GROUP BY ff.id, fi.id
+        GROUP BY ff.id
         ORDER BY ff.created_at DESC
         LIMIT ? OFFSET ?
       `).all(limit, offset);
     }
 
-    return c.json({ total, page, limit, data: rows });
+    // Font list is live data — never cache; uploaded fonts must appear immediately
+    return c.json({ total, page, limit, data: rows }, 200, {
+      "Cache-Control": "no-cache, no-store",
+    });
   } catch (e) {
     return c.json({ error: String(e) }, 500);
   }
@@ -278,7 +412,24 @@ fonts.post("/", async (c) => {
         .replace(/\.\.+/g, "")
         .replace(/^\/+/, "")
         .replace(/\/{2,}/g, "/");
-      const r2KeyOverride = sanitizedDir ? `${sanitizedDir}${filename}` : undefined;
+
+      // Compute the storage key upfront so we can write the file to disk.
+      // When no target dir is given, indexFont will generate its own key.
+      let r2KeyOverride: string | undefined;
+      if (sanitizedDir) {
+        r2KeyOverride = `${sanitizedDir}${filename}`;
+        // If this key already exists in the DB, remove the old entry first so the
+        // re-upload is a clean replace (INSERT OR IGNORE would silently fail otherwise).
+        const existing = getDb()
+          .prepare<{ id: string }, [string]>("SELECT id FROM font_files WHERE r2_key = ?")
+          .get(r2KeyOverride);
+        if (existing) {
+          deleteFontsByIds([existing.id]);
+          log("debug", `[upload] replaced existing entry for ${r2KeyOverride}`);
+        }
+        // Write file to disk — indexFont skips putFile when existingKey is provided
+        await putFile(r2KeyOverride, bytes);
+      }
 
       results.push(await indexFont(filename, bytes, r2KeyOverride));
     } catch (e) {
