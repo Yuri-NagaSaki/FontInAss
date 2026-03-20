@@ -69,7 +69,9 @@ fonts.get("/stats", (c) => {
       .sort((a, b) => b.count - a.count);
 
     return c.json({ total, folders }, 200, {
-      "Cache-Control": "no-cache, no-store",
+      // Browser caches 60 s — reduces repeat fetches on the font management page.
+      // CF bypasses this endpoint anyway (Authorization header present).
+      "Cache-Control": "public, max-age=60",
     });
   } catch (e) {
     return c.json({ total: 0, folders: [], error: String(e) }, 500);
@@ -94,7 +96,8 @@ fonts.get("/browse", (c) => {
       cursor: null,
       done: true,
     }, 200, {
-      "Cache-Control": "no-cache, no-store",
+      // Short browser cache — directory listings change rarely; reduces refetches on navigation.
+      "Cache-Control": "public, max-age=30",
     });
   } catch (e) {
     return c.json({ error: String(e) }, 500);

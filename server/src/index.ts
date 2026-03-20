@@ -23,6 +23,13 @@ getDb(); // Initialize DB and run migrations
 
 const app = new Hono();
 
+// HTTP request logger — active in debug mode
+app.use("*", async (c, next) => {
+  const start = Date.now();
+  await next();
+  log("debug", `${c.req.method} ${c.req.path} → ${c.res.status} (${Date.now() - start}ms)`);
+});
+
 // CORS
 app.use("*", async (c, next) => {
   return cors({
@@ -42,9 +49,44 @@ app.get("/api/health", (c) => {
   try {
     const db = getDb();
     const result = db.prepare<{ ok: number }, []>("SELECT 1 as ok").get();
-    return c.json({ status: "ok", db: result?.ok === 1, version: "1.0.0" });
+    return c.json({ status: "ok", db: result?.ok === 1, version: "1.0.0" }, 200, {
+      "Cache-Control": "public, max-age=30",
+    });
   } catch (e) {
     return c.json({ status: "error", error: String(e) }, 500);
+  }
+});
+
+// Cache-Control: hashed assets are immutable (Vite embeds content hash in filename)
+app.use("/assets/*", async (c, next) => {
+  await next();
+  c.res.headers.set("Cache-Control", "public, max-age=31536000, immutable");
+});
+
+// Cache-Control: stable static files — 1 day
+app.use("/favicon.svg", async (c, next) => {
+  await next();
+  c.res.headers.set("Cache-Control", "public, max-age=86400");
+});
+app.use("/robots.txt", async (c, next) => {
+  await next();
+  c.res.headers.set("Cache-Control", "public, max-age=86400");
+});
+app.use("/sitemap.xml", async (c, next) => {
+  await next();
+  c.res.headers.set("Cache-Control", "public, max-age=86400");
+});
+
+// Cache-Control: SPA HTML.
+// `public, max-age=0, s-maxage=300` lets Cloudflare edge-cache the HTML for 5 minutes
+// (reducing origin hits) while forcing browsers to always revalidate via ETag.
+// Risk: up to 5 min of stale HTML after a Docker rebuild — purge CF cache after deploys.
+app.use("*", async (c, next) => {
+  await next();
+  if (c.req.path.startsWith("/api/") || c.req.path.startsWith("/assets/")) return;
+  const ct = c.res.headers.get("content-type") ?? "";
+  if (ct.startsWith("text/html") && !c.res.headers.has("Cache-Control")) {
+    c.res.headers.set("Cache-Control", "public, max-age=0, s-maxage=300");
   }
 });
 
