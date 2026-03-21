@@ -210,6 +210,7 @@ async function processSubtitle(
       log("error", "[subset] fontsCheck DB error:", e);
       return { code: CODE.SERVER_ERROR, messages: ["Database error"], data: null };
     }
+    const missing = lookupReqs.filter(r => !strictMatchMap.get(r.key)).map(r => r.nameLower);
     if (missing.length > 0) {
       log("warn", `[subset:${filename}] fonts-check failed, missing: ${missing.map(n => displayName(n)).join(", ")}`);
       return { code: CODE.MISSING_FONT, messages: missing.map(n => `Missing font: [${displayName(n)}]`), data: null };
