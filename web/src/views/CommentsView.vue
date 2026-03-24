@@ -206,4 +206,25 @@ onUnmounted(() => {
 .wl-actions .wl-action:hover {
   color: var(--waline-theme-color) !important;
 }
+
+/* ── Reply @mention alignment fix ──────────────────────────────────
+   Waline renders reply comments as:
+     <div class="wl-content">
+       <div class="wl-reply-to"><a>@Name</a></div>
+       <div innerHTML><p>reply text…</p></div>
+     </div>
+   Default has float:left + margin-top:1em on the @tag, while the <p>
+   keeps browser-default margin-top, creating a visible height gap.
+   Fix: zero out the float margin-top so the @tag sits at the content
+   baseline, and collapse the first <p> margin so text starts inline. */
+.wl-card .wl-content .wl-reply-to {
+  float: left !important;
+  margin: 0 .4em 0 0 !important;
+  line-height: 2 !important;
+}
+/* Remove first-paragraph top margin so text aligns with the floated @tag */
+.wl-card .wl-content .wl-reply-to + div > p:first-child,
+.wl-card .wl-content .wl-reply-to + p:first-of-type {
+  margin-top: 0 !important;
+}
 </style>
