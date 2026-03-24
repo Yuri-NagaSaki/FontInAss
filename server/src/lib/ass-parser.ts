@@ -428,10 +428,24 @@ export function srtToAss(srtText: string, format: string, style: string): string
   return lines.join("\n");
 }
 
-/** Remove a section (e.g. [Fonts]) from ASS text */
+/** Remove a section (e.g. [Fonts]) from ASS text.
+ *  Handles encoded font data containing '[' characters within lines. */
 export function removeSection(assText: string, sectionName: string): string {
-  const pattern = new RegExp(`\\[${sectionName}\\][^\\[]*`, "g");
-  return assText.replace(pattern, "");
+  const header = `[${sectionName}]`;
+  const startIdx = assText.indexOf(header);
+  if (startIdx === -1) return assText;
+
+  // Find the next real section header: a line matching [Name] exactly.
+  // UUencoded data may contain '[' mid-line, so we must check line boundaries.
+  const sectionHeaderRe = /^\[[^\[\]\r\n]+\]\s*$/gm;
+  sectionHeaderRe.lastIndex = startIdx + header.length;
+  const match = sectionHeaderRe.exec(assText);
+
+  if (match) {
+    return assText.slice(0, startIdx) + assText.slice(match.index);
+  }
+  // No next section — remove everything from this section to end
+  return assText.slice(0, startIdx);
 }
 
 /** Check if ASS text has a [Fonts] section with content */

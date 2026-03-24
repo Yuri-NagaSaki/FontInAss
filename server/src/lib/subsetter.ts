@@ -166,6 +166,9 @@ function extractTTCFace(ttcBuf: ArrayBuffer, faceIndex: number): ArrayBuffer {
   const numFonts = view.getUint32(8, false);
   if (numFonts === 0 || numFonts > 256) throw new Error(`Invalid TTC: numFonts=${numFonts}`);
 
+  if (faceIndex >= numFonts) {
+    console.warn(`TTC faceIndex ${faceIndex} exceeds numFonts ${numFonts}, clamping to ${numFonts - 1}`);
+  }
   const safeIndex = Math.min(faceIndex, numFonts - 1);
   const faceOffset = view.getUint32(12 + safeIndex * 4, false);
   if (faceOffset >= ttcBuf.byteLength) throw new Error("Invalid TTC: faceOffset out of bounds");
@@ -216,6 +219,9 @@ function extractTTCFace(ttcBuf: ArrayBuffer, faceIndex: number): ArrayBuffer {
     outView.setUint32(r + 8, newOffsets[i], false);
     outView.setUint32(r + 12, t.length, false);
     const end = Math.min(t.offset + t.length, src.length);
+    if (t.offset + t.length > src.length) {
+      console.warn(`TTC table '${t.tag}' extends beyond file (offset=${t.offset}, length=${t.length}, fileSize=${src.length})`);
+    }
     out.set(src.subarray(t.offset, end), newOffsets[i]);
   }
 
