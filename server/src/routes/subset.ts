@@ -182,7 +182,44 @@ async function processSubtitle(
     text = removeSection(text, "Fonts");
   }
 
-  const { fontCharMap, originalNames } = analyseAss(text);
+  const { fontCharMap, subRename, originalNames } = analyseAss(text);
+
+  // If the subtitle was previously subset, fonts are referenced by 8-char prefix
+  // (e.g. "H66R6VYL") instead of original name (e.g. "HYXuanSong 45S").
+  // Apply the subRename map to restore original font names in both the fontCharMap
+  // and the subtitle text so lookups use the real font name.
+  if (Object.keys(subRename).length > 0) {
+    // Remap fontCharMap keys: replace subset-prefix names with original names
+    for (const [prefix, originalName] of Object.entries(subRename)) {
+      const prefixLower = prefix.toLowerCase();
+      const origLower = originalName.toLowerCase();
+      for (const key of Object.keys(fontCharMap)) {
+        const [name, ...rest] = key.split("|");
+        if (name === prefixLower) {
+          const newKey = [origLower, ...rest].join("|");
+          // Merge codepoint sets if the original name already exists
+          if (fontCharMap[newKey]) {
+            for (const cp of fontCharMap[key]) fontCharMap[newKey].add(cp);
+          } else {
+            fontCharMap[newKey] = fontCharMap[key];
+          }
+          delete fontCharMap[key];
+        }
+      }
+      // Update originalNames: register the restored original name
+      if (!(origLower in originalNames)) {
+        originalNames[origLower] = originalName;
+      }
+      // Rename fonts in the subtitle text: Style lines and \fn overrides
+      const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      text = text.replace(
+        new RegExp(`(,|\\\\fn@?)${escapedPrefix}(?=[,\\\\}\\r\\n])`, "gi"),
+        `$1${originalName}`,
+      );
+    }
+    log("debug", `[subset:${filename}] restored ${Object.keys(subRename).length} subset-renamed font(s)`);
+  }
+
   const fontEntries = Object.entries(fontCharMap);
   log("debug", `[subset:${filename}] found ${fontEntries.length} font(s): ${
     fontEntries.map(([k, v]) => {
