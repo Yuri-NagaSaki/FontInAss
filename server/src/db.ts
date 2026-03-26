@@ -42,6 +42,41 @@ CREATE TABLE IF NOT EXISTS font_names (
 CREATE INDEX IF NOT EXISTS idx_font_names_lower ON font_names(name_lower);
 CREATE INDEX IF NOT EXISTS idx_font_info_file_id ON font_info(file_id);
 CREATE INDEX IF NOT EXISTS idx_font_files_r2_key ON font_files(r2_key);
+
+-- Shared subtitle archives
+CREATE TABLE IF NOT EXISTS shared_archives (
+  id              TEXT PRIMARY KEY,
+  name_cn         TEXT NOT NULL,
+  letter          TEXT NOT NULL,
+  season          TEXT NOT NULL,
+  sub_group       TEXT NOT NULL,
+  languages       TEXT NOT NULL DEFAULT '[]',
+  subtitle_format TEXT NOT NULL DEFAULT '[]',
+  episode_count   INTEGER DEFAULT 0,
+  has_fonts       INTEGER DEFAULT 0,
+  filename        TEXT NOT NULL,
+  r2_key          TEXT UNIQUE,
+  file_size       INTEGER NOT NULL DEFAULT 0,
+  file_count      INTEGER DEFAULT 0,
+  download_url    TEXT,
+  local_path      TEXT,
+  status          TEXT NOT NULL DEFAULT 'published',
+  contributor     TEXT,
+  sub_entries     TEXT,
+  created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+  updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_archives_status ON shared_archives(status);
+CREATE INDEX IF NOT EXISTS idx_archives_letter ON shared_archives(letter);
+
+-- IP rate limiting for community uploads
+CREATE TABLE IF NOT EXISTS upload_rate_limit (
+  ip_hash     TEXT NOT NULL,
+  upload_date TEXT NOT NULL,
+  count       INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (ip_hash, upload_date)
+);
 `;
 
 // ─── DB singleton ─────────────────────────────────────────────────────────────

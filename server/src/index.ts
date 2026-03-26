@@ -14,6 +14,7 @@ import { ensureFontDir } from "./storage.js";
 import { getDb } from "./db.js";
 import fontsRoute from "./routes/fonts.js";
 import subsetRoute from "./routes/subset.js";
+import sharingRoute from "./routes/sharing.js";
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -47,6 +48,7 @@ app.use("*", compress());
 // Routes
 app.route("/api/fonts", fontsRoute);
 app.route("/api/subset", subsetRoute);
+app.route("/api/sharing", sharingRoute);
 
 // Health check — requires API key when configured
 app.get("/api/health", (c) => {

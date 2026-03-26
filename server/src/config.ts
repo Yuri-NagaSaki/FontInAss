@@ -14,6 +14,17 @@ export interface Config {
   subsetConcurrency: number;
   cacheMaxEntries: number;
   logLevel: string;
+  // R2 sharing
+  r2AccountId: string;
+  r2AccessKeyId: string;
+  r2SecretAccessKey: string;
+  r2BucketName: string;
+  r2PublicUrl: string;
+  // Sharing
+  sharingMaxFileSize: number;
+  sharingRateLimit: number;
+  sharingCacheTtl: number;
+  pendingDir: string;
 }
 
 function resolve(path: string): string {
@@ -30,6 +41,17 @@ export const config: Config = {
   subsetConcurrency:  parseInt(process.env.SUBSET_CONCURRENCY ?? "5", 10),
   cacheMaxEntries:    parseInt(process.env.CACHE_MAX_ENTRIES ?? "500", 10),
   logLevel:           process.env.LOG_LEVEL ?? "info",
+  // R2
+  r2AccountId:        process.env.R2_ACCOUNT_ID ?? "",
+  r2AccessKeyId:      process.env.R2_ACCESS_KEY_ID ?? "",
+  r2SecretAccessKey:  process.env.R2_SECRET_ACCESS_KEY ?? "",
+  r2BucketName:       process.env.R2_BUCKET_NAME ?? "",
+  r2PublicUrl:        (process.env.R2_PUBLIC_URL ?? "").replace(/\/+$/, ""),
+  // Sharing
+  sharingMaxFileSize: parseInt(process.env.SHARING_MAX_FILE_SIZE ?? "209715200", 10),
+  sharingRateLimit:   parseInt(process.env.SHARING_RATE_LIMIT ?? "3", 10),
+  sharingCacheTtl:    parseInt(process.env.SHARING_CACHE_TTL ?? "300", 10),
+  pendingDir:         resolve(process.env.PENDING_DIR ?? "./data/pending"),
 };
 
 export function log(level: "error" | "warn" | "info" | "debug", ...args: unknown[]): void {

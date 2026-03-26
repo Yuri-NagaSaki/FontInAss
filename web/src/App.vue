@@ -27,6 +27,7 @@ const prefetchRoute = (path: string) => {
 const navItems = [
   { path: "/",         labelKey: "home"     },
   { path: "/subset",   labelKey: "subset"   },
+  { path: "/sharing",  labelKey: "sharing"  },
   { path: "/comments", labelKey: "comments" },
   { path: "/about",    labelKey: "about"    },
 ];

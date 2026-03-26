@@ -304,3 +304,160 @@ export async function subsetFile(file: File, opts: SubsetOptions = {}): Promise<
 
 export { base64Encode, base64Decode };
 
+// ─── Sharing API ──────────────────────────────────────────────────────────────
+
+export interface SharedArchive {
+  id: string;
+  name_cn: string;
+  letter: string;
+  season: string;
+  sub_group: string;
+  languages: string;       // JSON array string
+  subtitle_format: string; // JSON array string
+  episode_count: number;
+  has_fonts: number;
+  filename: string;
+  r2_key: string | null;
+  file_size: number;
+  file_count: number;
+  download_url: string | null;
+  local_path: string | null;
+  status: string;
+  contributor: string | null;
+  sub_entries: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listSharedArchives(): Promise<SharedArchive[]> {
+  const res = await fetch(`${BASE}/api/sharing/archives`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function listPendingArchives(): Promise<SharedArchive[]> {
+  const res = await fetch(`${BASE}/api/sharing/pending`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function uploadSharedArchive(
+  file: File,
+  metadata: {
+    name_cn: string;
+    letter: string;
+    season: string;
+    sub_group: string;
+    languages: string[];
+    has_fonts: boolean;
+  },
+): Promise<{ id: string; download_url: string | null; filename: string; status: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("metadata", JSON.stringify(metadata));
+  const res = await fetch(`${BASE}/api/sharing/upload`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    throw new Error((body.error as string) || `Upload failed (HTTP ${res.status})`);
+  }
+  return res.json();
+}
+
+export async function contributeArchive(
+  file: File,
+  metadata: {
+    name_cn: string;
+    letter: string;
+    season: string;
+    sub_group: string;
+    languages: string[];
+    has_fonts: boolean;
+    contributor?: string;
+  },
+): Promise<{ id: string; status: string; message: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("metadata", JSON.stringify(metadata));
+  const res = await fetch(`${BASE}/api/sharing/contribute`, {
+    method: "POST",
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    throw new Error((body.error as string) || `Contribute failed (HTTP ${res.status})`);
+  }
+  return res.json();
+}
+
+export async function approveArchive(id: string): Promise<{ id: string; status: string }> {
+  const res = await fetch(`${BASE}/api/sharing/archives/${id}/approve`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function rejectArchive(id: string): Promise<{ id: string; status: string }> {
+  const res = await fetch(`${BASE}/api/sharing/archives/${id}/reject`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function deleteArchive(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/sharing/archives/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export function importIndexSSE(onMessage: (data: any) => void, onDone: () => void, onError: (err: string) => void): void {
+  const key = getApiKey();
+  const headers: Record<string, string> = { "X-API-Key": key };
+
+  fetch(`${BASE}/api/sharing/import-index`, {
+    method: "POST",
+    headers,
+  }).then(async (res) => {
+    if (!res.ok) {
+      onError(`HTTP ${res.status}: ${await res.text()}`);
+      return;
+    }
+    const reader = res.body?.getReader();
+    if (!reader) { onError("No response body"); return; }
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.startsWith("data:")) {
+          try {
+            const data = JSON.parse(line.slice(5).trim());
+            onMessage(data);
+            if (data.phase === "done" || data.phase === "error") {
+              onDone();
+              return;
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+    }
+    onDone();
+  }).catch((e) => onError(String(e)));
+}
+
+

@@ -16,6 +16,7 @@
     "clsx": "^2.1.1",
     "copy-to-clipboard": "^3.3.3",
     "file-saver": "^2.0.5",
+    "flexsearch": "^0.8.212",
     "jszip": "^3.10.1",
     "lodash-es": "^4.17.21",
     "lucide-vue-next": "^0.577.0",
