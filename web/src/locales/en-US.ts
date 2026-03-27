@@ -192,9 +192,9 @@ export default {
   openSourceTitle: "Font Library",
   openSourceDesc: "The FontInAss font library is maintained by catcat.blog and currently contains tens of thousands of CJK and Western fonts, with more added regularly. Requests and contributions are welcome.",
   // Sharing
-  sharing: "Sharing",
+  sharing: "Subtitle Sharing",
   sharingTitle: "Subtitle Sharing",
-  sharingDesc: "Browse and download pre-processed subsetted subtitle archive packages",
+  sharingDesc: "Browse and download subtitle archive packages",
   sharingSearchPlaceholder: "Search anime, sub group…",
   sharingAllLanguages: "All languages",
   sharingAllGroups: "All groups",
