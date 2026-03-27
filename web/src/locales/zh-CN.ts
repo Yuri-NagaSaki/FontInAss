@@ -217,7 +217,7 @@ export default {
   sharingContributor: "昵称",
   sharingContributorPlaceholder: "你的昵称（选填）",
   sharingDropZone: "拖拽 .zip 文件到此处 或 点击选择",
-  sharingMaxSize: "最大 100MB，需包含 .ass/.srt 字幕文件",
+  sharingMaxSize: "最大 100MB，需包含 .ass 字幕文件",
   sharingSubmit: "提交贡献",
   sharingPublish: "上传并发布",
   sharingDetected: "{episodes} 集 · {files} 个文件 · {formats} 格式 · {size}",
@@ -264,4 +264,5 @@ export default {
   sharingGuidelineSubGroup: "字幕组/压制组名称需准确填写，联名创作可用 & 连接，如「Nekomoe kissaten&LoliHouse」",
   sharingGuidelineZip: "压缩包命名需体现字幕组、番剧名和季度，方便后人识别",
   sharingGuidelineZipExample: "示例：[LoliHouse] 孤独摇滚 S1.zip、[喵萌奶茶屋] Frieren S1.zip",
+  sharingGuidelineOrigin: "如果是未经子集化处理的原始字幕，压缩包命名需加 -origin 后缀，如 [LoliHouse] 孤独摇滚 S1-origin.zip",
 }

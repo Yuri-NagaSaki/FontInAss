@@ -735,6 +735,10 @@ onMounted(() => {
                       <span class="text-sakura-300 shrink-0 mt-0.5">•</span>
                       <span class="font-medium text-ink-500">{{ t('sharingGuidelineZipExample') }}</span>
                     </li>
+                    <li class="flex items-start gap-1.5">
+                      <span class="text-sakura-300 shrink-0 mt-0.5">•</span>
+                      <span>{{ t('sharingGuidelineOrigin') }}</span>
+                    </li>
                   </ul>
                 </div>
               </div>

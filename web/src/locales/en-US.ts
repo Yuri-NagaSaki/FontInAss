@@ -217,7 +217,7 @@ export default {
   sharingContributor: "Nickname",
   sharingContributorPlaceholder: "Your nickname (optional)",
   sharingDropZone: "Drop .zip file here or click to select",
-  sharingMaxSize: "Max 100MB, must contain .ass/.srt subtitle files",
+  sharingMaxSize: "Max 100MB, must contain .ass subtitle files",
   sharingSubmit: "Submit",
   sharingPublish: "Upload & Publish",
   sharingDetected: "{episodes} ep · {files} files · {formats} · {size}",
@@ -264,4 +264,5 @@ export default {
   sharingGuidelineSubGroup: "Sub group/encoder name must be accurate. For collaborations, use & to connect, e.g. Nekomoe kissaten&LoliHouse",
   sharingGuidelineZip: "Zip name should include sub group, anime name, and season for easy identification",
   sharingGuidelineZipExample: "Example: [LoliHouse] 孤独摇滚 S1.zip, [喵萌奶茶屋] Frieren S1.zip",
+  sharingGuidelineOrigin: "For original (non-subsetted) subtitles, add -origin suffix to the zip name, e.g. [LoliHouse] 孤独摇滚 S1-origin.zip",
 }
