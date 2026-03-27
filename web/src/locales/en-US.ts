@@ -259,9 +259,9 @@ export default {
   sharingUploadSuccessDesc: "The admin will review your contribution soon. It will appear on the sharing page once approved.",
   sharingGuidelinesTitle: "Contribution Guidelines",
   sharingGuidelineName: "Anime name must be in Chinese, e.g. 葬送的芙莉莲, 孤独摇滚",
-  sharingGuidelineLetter: "Letter should be the Romaji/English initial of the anime name (e.g. Z, B)",
+  sharingGuidelineLetter: "Letter should be the initial of the Chinese anime name (e.g. 葬→Z, 孤→G)",
   sharingGuidelineSeason: "Season must match exactly: S1/S2/Movie/OVA etc.",
   sharingGuidelineSubGroup: "Sub group name must be accurate and complete, e.g. LoliHouse, 喵萌奶茶屋",
-  sharingGuidelineZip: "Zip naming convention: [SubGroup] AnimeName Season.zip for easy identification",
-  sharingGuidelineZipExample: "Example: [LoliHouse] 孤独摇滚 S1.zip, [喵萌奶茶屋] 葬送的芙莉莲 S1.zip",
+  sharingGuidelineZip: "Zip name should include sub group, anime name, and season for easy identification",
+  sharingGuidelineZipExample: "Example: [LoliHouse] 孤独摇滚 S1.zip, [喵萌奶茶屋] Frieren S1.zip",
 }

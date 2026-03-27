@@ -259,9 +259,9 @@ export default {
   sharingUploadSuccessDesc: "管理员将尽快审核你的贡献，通过后即可在分享页面看到。",
   sharingGuidelinesTitle: "贡献规范",
   sharingGuidelineName: "番剧名称必须使用中文，如「葬送的芙莉莲」「孤独摇滚」",
-  sharingGuidelineLetter: "首字母填写番剧名称对应的罗马音/英文首字母（如 Z、B）",
+  sharingGuidelineLetter: "首字母填写番剧中文名称的首字母（如 葬→Z、孤→G）",
   sharingGuidelineSeason: "季度严格选择对应的 S1/S2/Movie/OVA 等",
   sharingGuidelineSubGroup: "字幕组名称需准确填写完整名称，如「LoliHouse」「喵萌奶茶屋」",
-  sharingGuidelineZip: "压缩包命名规范：[字幕组] 番剧名 季度.zip，方便后续识别",
-  sharingGuidelineZipExample: "示例：[LoliHouse] 孤独摇滚 S1.zip、[喵萌奶茶屋] 葬送的芙莉莲 S1.zip",
+  sharingGuidelineZip: "压缩包命名需体现字幕组、番剧名和季度，方便后人识别",
+  sharingGuidelineZipExample: "示例：[LoliHouse] 孤独摇滚 S1.zip、[喵萌奶茶屋] Frieren S1.zip",
 }
