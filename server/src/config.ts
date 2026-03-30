@@ -3,7 +3,9 @@
  * Bun automatically loads .env from the current working directory.
  */
 
-import { resolve as resolvePath } from "node:path";
+import { resolve as resolvePath, join } from "node:path";
+import { mkdirSync, appendFileSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 
 export interface Config {
   port: number;
@@ -14,6 +16,7 @@ export interface Config {
   subsetConcurrency: number;
   cacheMaxEntries: number;
   logLevel: string;
+  logDir: string;
   // R2 sharing
   r2AccountId: string;
   r2AccessKeyId: string;
@@ -25,6 +28,8 @@ export interface Config {
   sharingRateLimit: number;
   sharingCacheTtl: number;
   pendingDir: string;
+  // Scheduler
+  autoIndexIntervalHours: number;
 }
 
 function resolve(path: string): string {
@@ -41,6 +46,7 @@ export const config: Config = {
   subsetConcurrency:  parseInt(process.env.SUBSET_CONCURRENCY ?? "5", 10),
   cacheMaxEntries:    parseInt(process.env.CACHE_MAX_ENTRIES ?? "500", 10),
   logLevel:           process.env.LOG_LEVEL ?? "info",
+  logDir:             resolve(process.env.LOG_DIR ?? "./data/logs"),
   // R2
   r2AccountId:        process.env.R2_ACCOUNT_ID ?? "",
   r2AccessKeyId:      process.env.R2_ACCESS_KEY_ID ?? "",
@@ -52,7 +58,17 @@ export const config: Config = {
   sharingRateLimit:   parseInt(process.env.SHARING_RATE_LIMIT ?? "3", 10),
   sharingCacheTtl:    parseInt(process.env.SHARING_CACHE_TTL ?? "300", 10),
   pendingDir:         resolve(process.env.PENDING_DIR ?? "./data/pending"),
+  // Scheduler
+  autoIndexIntervalHours: parseInt(process.env.AUTO_INDEX_INTERVAL_HOURS ?? "4", 10),
 };
+
+// Ensure log directory exists
+mkdirSync(config.logDir, { recursive: true });
+
+function getLogFilePath(): string {
+  const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  return join(config.logDir, `fontinass-${date}.log`);
+}
 
 export function log(level: "error" | "warn" | "info" | "debug", ...args: unknown[]): void {
   const levels = ["error", "warn", "info", "debug"];
@@ -62,5 +78,21 @@ export function log(level: "error" | "warn" | "info" | "debug", ...args: unknown
     const prefix = `[${level.toUpperCase()}] [${new Date().toISOString()}]`;
     if (level === "error") console.error(prefix, ...args);
     else console.log(prefix, ...args);
+
+    // Persist to daily log file
+    try {
+      const line = `${prefix} ${args.map(a => typeof a === "string" ? a : JSON.stringify(a)).join(" ")}\n`;
+      appendFileSync(getLogFilePath(), line);
+    } catch { /* silently ignore file write errors */ }
+  }
+}
+
+/** Constant-time string comparison to prevent timing attacks on API key. */
+export function safeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  try {
+    return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  } catch {
+    return false;
   }
 }

@@ -27,6 +27,7 @@ const router = createRouter({
     { path: "/cli", component: () => import("./views/CliView.vue") },
     { path: "/about", component: () => import("./views/AboutView.vue") },
     { path: "/comments", component: () => import("./views/CommentsView.vue") },
+    { path: "/logs", component: () => import("./views/LogsView.vue") },
   ],
 });
 

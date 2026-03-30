@@ -28,6 +28,7 @@ const navItems = [
   { path: "/",         labelKey: "home"     },
   { path: "/subset",   labelKey: "subset"   },
   { path: "/sharing",  labelKey: "sharing"  },
+  { path: "/logs",     labelKey: "navLogs"  },
   { path: "/cli",      labelKey: "cli"      },
   { path: "/comments", labelKey: "comments" },
   { path: "/about",    labelKey: "about"    },
@@ -106,6 +107,7 @@ const routeTitles: Record<string, string> = {
   "/subset": "字幕处理 · FontInAss",
   "/fonts": "字体管理 · FontInAss",
   "/sharing": "字幕分享 · FontInAss",
+  "/logs": "处理记录 · FontInAss",
   "/cli": "CLI · FontInAss",
   "/about": "关于 · FontInAss",
   "/comments": "评论区 · FontInAss",
@@ -148,7 +150,7 @@ watchEffect(() => {
           <button
             v-for="item in navItems"
             :key="item.path"
-            class="px-4 h-8 rounded-xl text-sm font-medium transition-all duration-150"
+            class="px-3 h-8 rounded-xl text-sm font-medium transition-all duration-150"
             :class="isNavActive(item.path)
               ? 'bg-sakura-400 text-white shadow-[var(--shadow-sm)]'
               : 'text-ink-600 hover:bg-sakura-50 hover:text-sakura-600'"
@@ -354,6 +356,14 @@ watchEffect(() => {
         </transition>
       </router-view>
     </main>
+
+    <!-- ─── Global Footer ──────────────────────────────────────────────────── -->
+    <footer class="text-center text-xs text-ink-300 py-6">
+      FontInAss · Built with 🌸 by
+      <a href="https://catcat.blog" target="_blank" rel="noopener" class="hover:text-sakura-400 transition-colors">catcat.blog</a>
+      ·
+      <a href="https://github.com/Yuri-NagaSaki/FontInAss" target="_blank" rel="noopener" class="hover:text-sakura-400 transition-colors">AGPL-3.0</a>
+    </footer>
   </div>
 
   <!-- ─── API Key modal ─────────────────────────────────────────────────── -->

@@ -367,7 +367,7 @@ export async function uploadSharedArchive(
   return res.json();
 }
 
-export async function contributeArchive(
+export function contributeArchive(
   file: File,
   metadata: {
     name_cn: string;
@@ -378,19 +378,36 @@ export async function contributeArchive(
     has_fonts: boolean;
     contributor?: string;
   },
+  onProgress?: (percent: number) => void,
 ): Promise<{ id: string; status: string; message: string }> {
-  const form = new FormData();
-  form.append("file", file);
-  form.append("metadata", JSON.stringify(metadata));
-  const res = await fetch(`${BASE}/api/sharing/contribute`, {
-    method: "POST",
-    body: form,
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("metadata", JSON.stringify(metadata));
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE}/api/sharing/contribute`);
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100));
+      }
+    });
+    xhr.addEventListener("load", () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch { resolve({ id: "", status: "ok", message: "" }); }
+      } else {
+        try {
+          const body = JSON.parse(xhr.responseText);
+          reject(new Error(body.error || `Contribute failed (HTTP ${xhr.status})`));
+        } catch {
+          reject(new Error(`Contribute failed (HTTP ${xhr.status})`));
+        }
+      }
+    });
+    xhr.addEventListener("error", () => reject(new Error("Network error")));
+    xhr.addEventListener("abort", () => reject(new Error("Upload aborted")));
+    xhr.send(form);
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
-    throw new Error((body.error as string) || `Contribute failed (HTTP ${res.status})`);
-  }
-  return res.json();
 }
 
 export async function approveArchive(id: string): Promise<{ id: string; status: string }> {
@@ -460,4 +477,193 @@ export function importIndexSSE(onMessage: (data: any) => void, onDone: () => voi
   }).catch((e) => onError(String(e)));
 }
 
+/** Edit archive metadata. */
+export async function editArchive(
+  id: string,
+  data: Partial<{
+    name_cn: string;
+    letter: string;
+    season: string;
+    sub_group: string;
+    languages: string[];
+    has_fonts: boolean;
+    episode_count: number;
+  }>,
+): Promise<SharedArchive> {
+  const res = await fetch(`${BASE}/api/sharing/archives/${id}`, {
+    method: "PUT",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    throw new Error((body.error as string) || `Edit failed (HTTP ${res.status})`);
+  }
+  return res.json();
+}
 
+/** Preview archive ZIP contents (file listing). */
+export async function previewArchive(id: string): Promise<{
+  filename: string;
+  totalFiles: number;
+  subtitleFiles: number;
+  files: { name: string; ext: string; isSubtitle: boolean }[];
+}> {
+  const res = await fetch(`${BASE}/api/sharing/archives/${id}/preview`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+/** Download archive file. Returns the file blob. */
+export async function downloadArchiveFile(id: string): Promise<{ blob: Blob; filename: string }> {
+  const res = await fetch(`${BASE}/api/sharing/archives/${id}/download-file`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const cd = res.headers.get("content-disposition");
+  const filename = cd?.match(/filename="?(.+?)"?$/)?.[1] ?? "archive.zip";
+  const blob = await res.blob();
+  return { blob, filename };
+}
+
+/** Upload to an existing anime/season directory. */
+export async function uploadToExisting(
+  file: File,
+  metadata: {
+    name_cn: string;
+    letter: string;
+    season: string;
+    sub_group: string;
+    languages: string[];
+    has_fonts: boolean;
+  },
+): Promise<{ id: string; status: string; filename: string; download_url?: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("name_cn", metadata.name_cn);
+  form.append("letter", metadata.letter);
+  form.append("season", metadata.season);
+  form.append("sub_group", metadata.sub_group);
+  form.append("languages", JSON.stringify(metadata.languages));
+  form.append("has_fonts", String(metadata.has_fonts));
+  const res = await fetch(`${BASE}/api/sharing/upload-to-existing`, {
+    method: "POST",
+    headers: authHeaders(),
+    body: form,
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    throw new Error((body.error as string) || `Upload failed (HTTP ${res.status})`);
+  }
+  return res.json();
+}
+
+// ─── Font Dedup API ───────────────────────────────────────────────────────────
+
+export interface DuplicateGroup {
+  hash: string;
+  size: number;
+  files: { id: string; r2_key: string; filename: string }[];
+}
+
+export async function findDuplicateFonts(): Promise<{ groups: DuplicateGroup[]; total: number }> {
+  const res = await fetch(`${BASE}/api/fonts/duplicates`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function dedupFonts(): Promise<{ groups: number; removed: number; freedBytes: number }> {
+  const res = await fetch(`${BASE}/api/fonts/dedup`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+// ─── Processing Logs API ──────────────────────────────────────────────────────
+
+export interface ProcessingLog {
+  id: string;
+  filename: string;
+  client_ip: string;
+  code: number;
+  messages: string | null;
+  missing_fonts: string | null;
+  font_count: number;
+  file_size: number;
+  elapsed_ms: number;
+  processed_at: string;
+}
+
+export interface ProcessingLogList {
+  total: number;
+  page: number;
+  limit: number;
+  data: ProcessingLog[];
+}
+
+export interface MissingFontRanking {
+  font_name: string;
+  count: number;
+  resolved: boolean;
+  resolved_at: string | null;
+}
+
+export interface LogStats {
+  total: number;
+  today: number;
+  success: number;
+  warnings: number;
+  errors: number;
+  totalMissingFonts: number;
+}
+
+export async function listProcessingLogs(
+  page = 1,
+  limit = 50,
+  search = "",
+  code?: number,
+): Promise<ProcessingLogList> {
+  const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+  if (search) params.set("search", search);
+  if (code !== undefined) params.set("code", String(code));
+  const res = await fetch(`${BASE}/api/logs?${params}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function getMissingFonts(limit = 20, showResolved = false): Promise<MissingFontRanking[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (showResolved) params.set("show_resolved", "true");
+  const res = await fetch(`${BASE}/api/logs/missing-fonts?${params}`);
+  if (!res.ok) throw new Error(await res.text());
+  const json = await res.json();
+  return json.data ?? json;
+}
+
+export async function resolveMissingFont(fontName: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/logs/missing-fonts/resolve`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ font_name: fontName }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function unresolveMissingFont(fontName: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/logs/missing-fonts/unresolve`, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ font_name: fontName }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function getLogStats(): Promise<LogStats> {
+  const res = await fetch(`${BASE}/api/logs/stats`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

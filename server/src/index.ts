@@ -9,12 +9,14 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { compress } from "hono/compress";
 import { serveStatic } from "hono/bun";
-import { config, log } from "./config.js";
+import { config, log, safeCompare } from "./config.js";
 import { ensureFontDir } from "./storage.js";
 import { getDb } from "./db.js";
 import fontsRoute from "./routes/fonts.js";
 import subsetRoute from "./routes/subset.js";
 import sharingRoute from "./routes/sharing.js";
+import logsRoute from "./routes/logs.js";
+import { startScheduler } from "./lib/scheduler.js";
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -49,6 +51,7 @@ app.use("*", compress());
 app.route("/api/fonts", fontsRoute);
 app.route("/api/subset", subsetRoute);
 app.route("/api/sharing", sharingRoute);
+app.route("/api/logs", logsRoute);
 
 // Health check — requires API key when configured
 app.get("/api/health", (c) => {
@@ -56,7 +59,7 @@ app.get("/api/health", (c) => {
     const provided =
       c.req.header("x-api-key") ??
       c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
-    if (provided !== config.apiKey) {
+    if (!provided || !safeCompare(provided, config.apiKey)) {
       return c.json({ error: "Unauthorized" }, 401);
     }
   }
@@ -125,6 +128,8 @@ log("info", `Font directory: ${config.fontDir}`);
 log("info", `Database: ${config.dbPath}`);
 log("info", `API key: ${config.apiKey ? "configured" : "NONE (open access)"}`);
 
+// Start periodic auto-index + auto-dedup scheduler
+startScheduler();
 export default {
   port: config.port,
   fetch: app.fetch,

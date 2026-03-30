@@ -17,10 +17,11 @@
  */
 
 import { Hono } from "hono";
-import { config, log } from "../config.js";
+import { config, log, safeCompare } from "../config.js";
 import { getDb, deleteFontsByIds, findExistingKeys } from "../db.js";
 import { browseLevel, listAllKeys, scanAllFonts, getFile, fileExists, deleteFile, putFile } from "../storage.js";
 import { indexFont, parseFontMetadata } from "../lib/font-manager.js";
+import { findDuplicates, removeDuplicates } from "../lib/scheduler.js";
 
 const fonts = new Hono();
 
@@ -33,7 +34,7 @@ fonts.use("*", async (c, next) => {
     c.req.header("x-api-key") ??
     c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
 
-  if (provided !== config.apiKey) {
+  if (!provided || !safeCompare(provided, config.apiKey)) {
     return c.json({ error: "Unauthorized" }, 401);
   }
   return next();
@@ -413,7 +414,8 @@ fonts.post("/", async (c) => {
     try {
       const bytes = new Uint8Array(await fileEntry.arrayBuffer());
       const rawDir = c.req.header("x-target-dir") ?? "";
-      const sanitizedDir = rawDir
+      const decoded = decodeURIComponent(rawDir);
+      const sanitizedDir = decoded
         .replace(/\\/g, "/")
         .replace(/\.\.+/g, "")
         .replace(/^\/+/, "")
@@ -484,6 +486,31 @@ fonts.delete("/", async (c) => {
   await Promise.all(r2Keys.map(key => deleteFile(key)));
 
   return c.json({ deleted: r2Keys.length });
+});
+
+// ─── Find duplicate fonts ─────────────────────────────────────────────────────
+
+fonts.get("/duplicates", async (c) => {
+  try {
+    const groups = await findDuplicates();
+    return c.json({ groups, total: groups.length });
+  } catch (e) {
+    log("error", "[fonts/duplicates] error:", e);
+    return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+// ─── Remove duplicate fonts ───────────────────────────────────────────────────
+
+fonts.post("/dedup", async (c) => {
+  try {
+    const result = await removeDuplicates();
+    log("info", `[fonts/dedup] removed ${result.removed} duplicates from ${result.groups} group(s)`);
+    return c.json(result);
+  } catch (e) {
+    log("error", "[fonts/dedup] error:", e);
+    return c.json({ error: "Internal server error" }, 500);
+  }
 });
 
 export default fonts;

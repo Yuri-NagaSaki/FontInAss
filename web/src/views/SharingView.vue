@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { toast } from "vue-sonner";
 import { debounce } from "lodash-es";
 import {
   Share2, Search, X, Tv, Download, Upload, Heart,
   Paperclip, FileArchive, FolderOpen, ChevronRight, Home,
   ArrowLeft, CheckCircle2, AlertCircle, CloudUpload,
+  Eye, Pencil, Trash2, KeyRound,
 } from "lucide-vue-next";
 import KButton from "../components/KButton.vue";
 import KBadge from "../components/KBadge.vue";
@@ -15,6 +17,11 @@ import type { SharedArchive } from "../api/client";
 import {
   listSharedArchives,
   contributeArchive,
+  editArchive,
+  deleteArchive,
+  previewArchive,
+  downloadArchiveFile,
+  getApiKey,
 } from "../api/client";
 import { buildSearchIndex, searchArchives } from "../lib/search";
 
@@ -172,6 +179,7 @@ const uploadDetected = ref("");
 const dropHover = ref(false);
 const uploadSuccess = ref(false);
 const uploadError = ref("");
+const uploadProgress = ref(0);
 
 const LANG_OPTIONS = ["chs", "cht", "jpn", "chs_jpn", "cht_jpn", "sc", "tc", "eng"];
 
@@ -216,6 +224,7 @@ function resetForm() {
   uploadDetected.value = "";
   uploadSuccess.value = false;
   uploadError.value = "";
+  uploadProgress.value = 0;
 }
 
 function openContributeView() {
@@ -232,6 +241,7 @@ function closeContributeView() {
 async function submitContribute() {
   if (!uploadFile.value || uploadSubmitting.value) return;
   uploadError.value = "";
+  uploadProgress.value = 0;
   const meta = {
     name_cn: uploadForm.value.name_cn,
     letter: uploadForm.value.letter.toUpperCase() || uploadForm.value.name_cn.charAt(0).toUpperCase(),
@@ -243,12 +253,9 @@ async function submitContribute() {
   };
   uploadSubmitting.value = true;
   try {
-    await contributeArchive(uploadFile.value, meta);
+    await contributeArchive(uploadFile.value, meta, (pct) => { uploadProgress.value = pct; });
     uploadSuccess.value = true;
-    setTimeout(() => {
-      closeContributeView();
-      loadArchives();
-    }, 2000);
+    loadArchives();
   } catch (e: any) {
     console.error("Upload error:", e);
     uploadError.value = e.message || String(e);
@@ -266,6 +273,8 @@ watch(() => uploadForm.value.name_cn, (name) => {
 });
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
+
+const isAdmin = computed(() => !!getApiKey());
 
 async function loadArchives() {
   loading.value = true;
@@ -288,10 +297,160 @@ async function loadArchives() {
   }
 }
 
-function downloadArchive(archive: SharedArchive) {
+function downloadArchiveByUrl(archive: SharedArchive) {
   if (archive.download_url) {
     window.open(archive.download_url, "_blank");
   }
+}
+
+// ─── Admin: Preview ───────────────────────────────────────────────────────────
+
+const showPreviewModal = ref(false);
+const previewLoading = ref(false);
+const previewData = ref<{ filename: string; totalFiles: number; subtitleFiles: number; files: { name: string; ext: string; isSubtitle: boolean }[] } | null>(null);
+const previewError = ref("");
+
+async function openPreview(archive: SharedArchive) {
+  showPreviewModal.value = true;
+  previewLoading.value = true;
+  previewError.value = "";
+  previewData.value = null;
+  try {
+    previewData.value = await previewArchive(archive.id);
+  } catch (e: any) {
+    previewError.value = e.message || String(e);
+  } finally {
+    previewLoading.value = false;
+  }
+}
+
+function closePreview() {
+  showPreviewModal.value = false;
+  previewData.value = null;
+  previewError.value = "";
+}
+
+// ─── Admin: Download file ─────────────────────────────────────────────────────
+
+const downloadingId = ref("");
+
+async function downloadFile(archive: SharedArchive) {
+  downloadingId.value = archive.id;
+  try {
+    const { blob, filename } = await downloadArchiveFile(archive.id);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e: any) {
+    toast.error(e.message || String(e));
+  } finally {
+    downloadingId.value = "";
+  }
+}
+
+// ─── Admin: Edit ──────────────────────────────────────────────────────────────
+
+const showEditModal = ref(false);
+const editForm = ref({ name_cn: "", letter: "", season: "S1", sub_group: "", languages: [] as string[], has_fonts: false, episode_count: 0 });
+const editingId = ref("");
+const editSubmitting = ref(false);
+
+function openEdit(archive: SharedArchive) {
+  editingId.value = archive.id;
+  editForm.value = {
+    name_cn: archive.name_cn,
+    letter: archive.letter,
+    season: archive.season,
+    sub_group: archive.sub_group,
+    languages: (() => { try { return JSON.parse(archive.languages); } catch { return []; } })(),
+    has_fonts: !!archive.has_fonts,
+    episode_count: archive.episode_count,
+  };
+  showEditModal.value = true;
+}
+
+function closeEdit() {
+  showEditModal.value = false;
+  editingId.value = "";
+}
+
+function toggleEditLang(lang: string) {
+  const idx = editForm.value.languages.indexOf(lang);
+  if (idx >= 0) editForm.value.languages.splice(idx, 1);
+  else editForm.value.languages.push(lang);
+}
+
+async function submitEdit() {
+  if (editSubmitting.value) return;
+  editSubmitting.value = true;
+  try {
+    await editArchive(editingId.value, editForm.value);
+    toast.success(t("sharingEditSuccess"));
+    closeEdit();
+    await loadArchives();
+  } catch (e: any) {
+    toast.error(e.message || String(e));
+  } finally {
+    editSubmitting.value = false;
+  }
+}
+
+// ─── Admin: Delete ────────────────────────────────────────────────────────────
+
+async function confirmDelete(archive: SharedArchive) {
+  if (!confirm(t("sharingDeleteConfirm"))) return;
+  try {
+    await deleteArchive(archive.id);
+    toast.success(t("sharingDeleteSuccess"));
+    await loadArchives();
+  } catch (e: any) {
+    toast.error(e.message || String(e));
+  }
+}
+
+// ─── Autocomplete for anime name (fuzzy search from existing archives) ────────
+
+const showAutoComplete = ref(false);
+const autoCompleteResults = computed(() => {
+  const q = uploadForm.value.name_cn.trim().toLowerCase();
+  if (!q || q.length < 1) return [];
+  const seen = new Map<string, { name_cn: string; letter: string; seasons: Set<string> }>();
+  for (const a of archives.value) {
+    if (!a.name_cn.toLowerCase().includes(q)) continue;
+    const key = a.name_cn;
+    if (!seen.has(key)) seen.set(key, { name_cn: a.name_cn, letter: a.letter, seasons: new Set() });
+    seen.get(key)!.seasons.add(a.season);
+  }
+  return [...seen.values()].slice(0, 8);
+});
+
+function selectAutoComplete(item: { name_cn: string; letter: string }) {
+  uploadForm.value.name_cn = item.name_cn;
+  uploadForm.value.letter = item.letter;
+  showAutoComplete.value = false;
+}
+
+// ─── Sub-group autocomplete ───────────────────────────────────────────────────
+
+const showSubGroupAC = ref(false);
+const subGroupACResults = computed(() => {
+  const q = uploadForm.value.sub_group.trim().toLowerCase();
+  if (!q || q.length < 1) return [];
+  const seen = new Set<string>();
+  for (const a of archives.value) {
+    if (a.sub_group.toLowerCase().includes(q) && !seen.has(a.sub_group)) {
+      seen.add(a.sub_group);
+    }
+  }
+  return [...seen].slice(0, 8);
+});
+
+function selectSubGroup(name: string) {
+  uploadForm.value.sub_group = name;
+  showSubGroupAC.value = false;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -337,6 +496,10 @@ onMounted(() => {
             </p>
           </div>
         </div>
+        <KButton variant="primary" @click="openContributeView" class="shrink-0">
+          <CloudUpload class="w-4 h-4" />
+          {{ t('sharingContributeButton') }}
+        </KButton>
       </div>
 
       <!-- Search -->
@@ -506,12 +669,44 @@ onMounted(() => {
             </div>
           </div>
           <button
-            @click="downloadArchive(archive)"
+            @click="downloadArchiveByUrl(archive)"
             class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-sakura-400 hover:text-white hover:bg-sakura-500 transition-all duration-200 active:scale-95 mt-0.5"
             :title="t('download')"
           >
             <Download class="w-4 h-4" />
           </button>
+          <!-- Admin actions -->
+          <template v-if="isAdmin">
+            <button
+              @click="openPreview(archive)"
+              class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-sky-400 hover:text-white hover:bg-sky-500 transition-all duration-200 active:scale-95 mt-0.5"
+              :title="t('sharingPreview')"
+            >
+              <Eye class="w-4 h-4" />
+            </button>
+            <button
+              @click="downloadFile(archive)"
+              :disabled="downloadingId === archive.id"
+              class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-mint-400 hover:text-white hover:bg-mint-500 transition-all duration-200 active:scale-95 mt-0.5"
+              :title="t('sharingDownload')"
+            >
+              <Download class="w-4 h-4" />
+            </button>
+            <button
+              @click="openEdit(archive)"
+              class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-amber-400 hover:text-white hover:bg-amber-500 transition-all duration-200 active:scale-95 mt-0.5"
+              :title="t('sharingEdit')"
+            >
+              <Pencil class="w-4 h-4" />
+            </button>
+            <button
+              @click="confirmDelete(archive)"
+              class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-red-400 hover:text-white hover:bg-red-500 transition-all duration-200 active:scale-95 mt-0.5"
+              :title="t('delete')"
+            >
+              <Trash2 class="w-4 h-4" />
+            </button>
+          </template>
         </div>
       </div>
       <KEmpty v-if="seasonArchives.length === 0" :title="t('sharingNoResults')" />
@@ -546,11 +741,22 @@ onMounted(() => {
               </div>
             </div>
             <button
-              @click="downloadArchive(result)"
+              @click="downloadArchiveByUrl(result)"
               class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-sakura-400 hover:text-white hover:bg-sakura-500 transition-all duration-200 active:scale-95 mt-0.5"
             >
               <Download class="w-4 h-4" />
             </button>
+            <template v-if="isAdmin">
+              <button @click="openPreview(result)" class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-sky-400 hover:text-white hover:bg-sky-500 transition-all duration-200 active:scale-95 mt-0.5">
+                <Eye class="w-4 h-4" />
+              </button>
+              <button @click="openEdit(result)" class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-amber-400 hover:text-white hover:bg-amber-500 transition-all duration-200 active:scale-95 mt-0.5">
+                <Pencil class="w-4 h-4" />
+              </button>
+              <button @click="confirmDelete(result)" class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-red-400 hover:text-white hover:bg-red-500 transition-all duration-200 active:scale-95 mt-0.5">
+                <Trash2 class="w-4 h-4" />
+              </button>
+            </template>
           </div>
         </div>
       </div>
@@ -559,25 +765,7 @@ onMounted(() => {
     </div>
 
     <!-- ═══ Contribute Footer CTA ═══ -->
-    <section v-if="!loading && archives.length > 0 && !showContributeView" class="card overflow-hidden mt-4">
-      <div class="flex flex-col sm:flex-row items-center gap-4 p-5 sm:p-6 bg-gradient-to-r from-mint-50/60 to-sakura-50/40">
-        <div class="w-11 h-11 rounded-xl bg-mint-100 flex items-center justify-center shrink-0">
-          <Heart class="w-5 h-5 text-mint-500" />
-        </div>
-        <div class="flex-1 text-center sm:text-left">
-          <h3 class="font-display font-semibold text-ink-800 text-base">
-            {{ t('sharingContributeTitle') }}
-          </h3>
-          <p class="text-sm text-ink-400 mt-0.5">
-            {{ t('sharingContributeDesc') }}
-          </p>
-        </div>
-        <KButton variant="primary" @click="openContributeView" class="shrink-0">
-          <CloudUpload class="w-4 h-4" />
-          {{ t('sharingContributeButton') }}
-        </KButton>
-      </div>
-    </section>
+    <!-- Bottom contribute CTA removed — button now in header -->
 
     <!-- ═══ Contribute View (Inline Full-Page) ═══ -->
     <Transition name="slide">
@@ -598,7 +786,11 @@ onMounted(() => {
             <CheckCircle2 class="w-8 h-8 text-mint-500" />
           </div>
           <h2 class="font-display font-bold text-xl text-ink-900 mb-2">{{ t('sharingUploadSuccess') }}</h2>
-          <p class="text-sm text-ink-400">{{ t('sharingUploadSuccessDesc') }}</p>
+          <p class="text-sm text-ink-400 mb-6">{{ t('sharingUploadSuccessDesc') }}</p>
+          <KButton variant="primary" @click="resetForm">
+            <CloudUpload class="w-4 h-4" />
+            {{ t('sharingUploadAnother') }}
+          </KButton>
         </div>
 
         <!-- Upload form -->
@@ -626,15 +818,34 @@ onMounted(() => {
               </h3>
 
               <div class="flex flex-col gap-4">
-                <!-- Row 1: Anime name + Letter -->
+                <!-- Row 1: Anime name (with autocomplete) + Letter -->
                 <div class="flex gap-3">
-                  <div class="flex-1">
+                  <div class="flex-1 relative">
                     <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingAnimeName') }} *</label>
                     <input
                       v-model="uploadForm.name_cn"
+                      @focus="showAutoComplete = true"
+                      @blur="setTimeout(() => showAutoComplete = false, 200)"
+                      autocomplete="off"
                       class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-all duration-150"
                       :placeholder="t('sharingAnimeNamePlaceholder')"
                     />
+                    <!-- Autocomplete dropdown -->
+                    <div
+                      v-if="showAutoComplete && autoCompleteResults.length > 0"
+                      class="absolute z-20 left-0 right-0 top-full mt-1 bg-white rounded-xl border border-sakura-200 shadow-lg max-h-48 overflow-y-auto"
+                    >
+                      <button
+                        v-for="item in autoCompleteResults"
+                        :key="item.name_cn"
+                        @mousedown.prevent="selectAutoComplete(item)"
+                        class="w-full px-3.5 py-2.5 text-left hover:bg-sakura-50 transition-colors duration-100 flex items-center gap-2 border-b border-ink-50 last:border-b-0"
+                      >
+                        <Tv class="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                        <span class="text-sm text-ink-800 truncate flex-1">{{ item.name_cn }}</span>
+                        <span class="text-[10px] text-ink-400">{{ item.letter }} · {{ [...item.seasons].join(', ') }}</span>
+                      </button>
+                    </div>
                   </div>
                   <div class="w-20">
                     <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingLetter') }}</label>
@@ -658,13 +869,30 @@ onMounted(() => {
                       <option v-for="s in ['S1','S2','S3','S4','Movie','SPs','OVA']" :key="s" :value="s">{{ s }}</option>
                     </select>
                   </div>
-                  <div class="flex-1">
+                  <div class="flex-1 relative">
                     <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingSubGroup') }} *</label>
                     <input
                       v-model="uploadForm.sub_group"
+                      @focus="showSubGroupAC = true"
+                      @blur="setTimeout(() => showSubGroupAC = false, 200)"
+                      autocomplete="off"
                       class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-all duration-150"
                       :placeholder="t('sharingSubGroupPlaceholder')"
                     />
+                    <!-- Sub-group autocomplete dropdown -->
+                    <div
+                      v-if="showSubGroupAC && subGroupACResults.length > 0"
+                      class="absolute z-20 left-0 right-0 top-full mt-1 bg-white rounded-xl border border-sakura-200 shadow-lg max-h-48 overflow-y-auto"
+                    >
+                      <button
+                        v-for="name in subGroupACResults"
+                        :key="name"
+                        @mousedown.prevent="selectSubGroup(name)"
+                        class="w-full px-3.5 py-2.5 text-left hover:bg-sakura-50 transition-colors duration-100 border-b border-ink-50 last:border-b-0"
+                      >
+                        <span class="text-sm text-ink-800">{{ name }}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -799,6 +1027,20 @@ onMounted(() => {
                 </div>
               </div>
 
+              <!-- Upload progress -->
+              <div v-if="uploadSubmitting" class="w-full">
+                <div class="flex items-center justify-between text-xs text-ink-400 mb-1.5">
+                  <span>{{ t('sharingUploading') }}</span>
+                  <span class="font-mono">{{ uploadProgress }}%</span>
+                </div>
+                <div class="w-full h-2 rounded-full bg-ink-100 overflow-hidden">
+                  <div
+                    class="h-full rounded-full bg-gradient-to-r from-sakura-400 to-sakura-500 transition-all duration-300 ease-out"
+                    :style="{ width: `${uploadProgress}%` }"
+                  />
+                </div>
+              </div>
+
               <!-- Submit button -->
               <KButton
                 variant="primary"
@@ -816,6 +1058,118 @@ onMounted(() => {
         </template>
       </div>
     </Transition>
+
+
+
+    <!-- ═══ Preview Modal ═══ -->
+    <Teleport to="body">
+      <Transition name="slide">
+        <div v-if="showPreviewModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" @click.self="closePreview">
+          <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col overflow-hidden">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-ink-100">
+              <h3 class="font-display font-bold text-lg text-ink-900">{{ t('sharingPreviewTitle') }}</h3>
+              <button @click="closePreview" class="w-8 h-8 rounded-xl flex items-center justify-center hover:bg-ink-100 transition-colors">
+                <X class="w-4 h-4 text-ink-400" />
+              </button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-6">
+              <div v-if="previewLoading" class="flex justify-center py-8"><KSpinner /></div>
+              <div v-else-if="previewError" class="text-sm text-red-600 p-4 rounded-xl bg-red-50">{{ previewError }}</div>
+              <template v-else-if="previewData">
+                <div class="flex gap-4 mb-4">
+                  <KBadge variant="default">{{ t('sharingTotalFiles') }}: {{ previewData.totalFiles }}</KBadge>
+                  <KBadge variant="sky">{{ t('sharingSubtitleFiles') }}: {{ previewData.subtitleFiles }}</KBadge>
+                </div>
+                <div class="divide-y divide-ink-100">
+                  <div
+                    v-for="file in previewData.files"
+                    :key="file.name"
+                    class="flex items-center gap-3 py-2 text-sm"
+                  >
+                    <FileArchive class="w-4 h-4 shrink-0" :class="file.isSubtitle ? 'text-sky-400' : 'text-ink-300'" />
+                    <span class="flex-1 truncate text-ink-700">{{ file.name }}</span>
+                    <KBadge v-if="file.isSubtitle" variant="sky" class="text-[10px]">{{ file.ext }}</KBadge>
+                    <KBadge v-else variant="default" class="text-[10px]">{{ file.ext }}</KBadge>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <!-- ═══ Edit Modal ═══ -->
+    <Teleport to="body">
+      <Transition name="slide">
+        <div v-if="showEditModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" @click.self="closeEdit">
+          <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] flex flex-col overflow-hidden">
+            <div class="flex items-center justify-between px-6 py-4 border-b border-ink-100">
+              <h3 class="font-display font-bold text-lg text-ink-900">{{ t('sharingEditTitle') }}</h3>
+              <button @click="closeEdit" class="w-8 h-8 rounded-xl flex items-center justify-center hover:bg-ink-100 transition-colors">
+                <X class="w-4 h-4 text-ink-400" />
+              </button>
+            </div>
+            <div class="flex-1 overflow-y-auto p-6">
+              <div class="flex flex-col gap-4">
+                <div class="flex gap-3">
+                  <div class="flex-1">
+                    <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingAnimeName') }}</label>
+                    <input v-model="editForm.name_cn" class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sakura-300/50" />
+                  </div>
+                  <div class="w-20">
+                    <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingLetter') }}</label>
+                    <input v-model="editForm.letter" maxlength="1" class="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-center uppercase bg-white focus:outline-none focus:ring-2 focus:ring-sakura-300/50" />
+                  </div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="w-32">
+                    <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingSeason') }}</label>
+                    <select v-model="editForm.season" class="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sakura-300/50">
+                      <option v-for="s in ['S1','S2','S3','S4','Movie','SPs','OVA']" :key="s" :value="s">{{ s }}</option>
+                    </select>
+                  </div>
+                  <div class="flex-1">
+                    <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingSubGroup') }}</label>
+                    <input v-model="editForm.sub_group" class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sakura-300/50" />
+                  </div>
+                </div>
+                <div>
+                  <label class="text-xs font-medium text-ink-500 mb-2 block">{{ t('sharingLanguages') }}</label>
+                  <div class="flex flex-wrap gap-2">
+                    <button
+                      v-for="lang in LANG_OPTIONS"
+                      :key="lang"
+                      @click="toggleEditLang(lang)"
+                      class="px-3.5 py-2 rounded-xl text-xs font-medium border-2 transition-all duration-150"
+                      :class="editForm.languages.includes(lang)
+                        ? 'bg-sakura-50 border-sakura-300 text-sakura-700 shadow-sm'
+                        : 'bg-white border-ink-100 text-ink-400 hover:border-sakura-200 hover:text-ink-600'"
+                    >
+                      {{ lang }}
+                    </button>
+                  </div>
+                </div>
+                <div class="flex gap-3">
+                  <div class="w-32">
+                    <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingEpisodeCount') }}</label>
+                    <input v-model.number="editForm.episode_count" type="number" min="0" class="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sakura-300/50" />
+                  </div>
+                  <label class="flex items-center gap-2.5 text-sm text-ink-600 cursor-pointer select-none mt-auto pb-2.5">
+                    <input type="checkbox" v-model="editForm.has_fonts" class="rounded border-ink-300 text-sakura-500 focus:ring-sakura-300" />
+                    {{ t('sharingHasFonts') }}
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="px-6 py-4 border-t border-ink-100 flex justify-end gap-3">
+              <KButton variant="secondary" @click="closeEdit">{{ t('cancel') }}</KButton>
+              <KButton variant="primary" :loading="editSubmitting" @click="submitEdit">{{ t('save') }}</KButton>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
 
   </div>
 </template>

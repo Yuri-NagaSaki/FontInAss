@@ -12,7 +12,7 @@
  */
 
 import { Hono } from "hono";
-import { config, log } from "../config.js";
+import { config, log, safeCompare } from "../config.js";
 import { getDb } from "../db.js";
 import { r2Upload, r2Delete, isR2Configured } from "../lib/r2-storage.js";
 import { createHash } from "node:crypto";
@@ -84,7 +84,8 @@ function checkApiKey(c: any): boolean {
   const provided =
     c.req.header("x-api-key") ??
     c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
-  return provided === config.apiKey;
+  if (!provided) return false;
+  return safeCompare(provided, config.apiKey);
 }
 
 // ─── Helper: generate nanoid-like ID ──────────────────────────────────────────
@@ -153,6 +154,7 @@ async function validateZipContents(
 /** Extract filenames from a ZIP central directory (minimal parser). */
 function extractZipFilenames(buf: Buffer): string[] {
   const names: string[] = [];
+  const MAX_UNCOMPRESSED = 500 * 1024 * 1024; // 500MB limit
   // Find End of Central Directory record (last 65KB)
   const searchStart = Math.max(0, buf.length - 65536);
   let eocdOffset = -1;
@@ -167,9 +169,15 @@ function extractZipFilenames(buf: Buffer): string[] {
   const cdOffset = buf.readUInt32LE(eocdOffset + 16);
   const cdEntries = buf.readUInt16LE(eocdOffset + 10);
   let pos = cdOffset;
+  let totalUncompressed = 0;
 
   for (let i = 0; i < cdEntries && pos < buf.length - 46; i++) {
     if (buf[pos] !== 0x50 || buf[pos + 1] !== 0x4b || buf[pos + 2] !== 0x01 || buf[pos + 3] !== 0x02) break;
+    const uncompressedSize = buf.readUInt32LE(pos + 24);
+    totalUncompressed += uncompressedSize;
+    if (totalUncompressed > MAX_UNCOMPRESSED) {
+      throw new Error("ZIP uncompressed size exceeds 500MB limit (possible zip bomb)");
+    }
     const nameLen = buf.readUInt16LE(pos + 28);
     const extraLen = buf.readUInt16LE(pos + 30);
     const commentLen = buf.readUInt16LE(pos + 32);
@@ -451,6 +459,217 @@ sharing.delete("/archives/:id", async (c) => {
   log("info", `[sharing] deleted: ${row.id}`);
 
   return c.json({ deleted: true });
+});
+
+/** PUT /archives/:id — edit archive metadata (admin). */
+sharing.put("/archives/:id", async (c) => {
+  if (!checkApiKey(c)) return c.json({ error: "Unauthorized" }, 401);
+
+  const db = getDb();
+  const id = c.req.param("id");
+  const existing = db
+    .prepare<{ id: string }, [string]>("SELECT id FROM shared_archives WHERE id = ?")
+    .get(id);
+
+  if (!existing) return c.json({ error: "Archive not found" }, 404);
+
+  let body: Partial<{
+    name_cn: string;
+    letter: string;
+    season: string;
+    sub_group: string;
+    languages: string[];
+    has_fonts: boolean;
+    episode_count: number;
+  }>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: "Expected JSON body" }, 400);
+  }
+
+  const updates: string[] = [];
+  const params: unknown[] = [];
+
+  if (body.name_cn !== undefined) { updates.push("name_cn = ?"); params.push(body.name_cn); }
+  if (body.letter !== undefined) { updates.push("letter = ?"); params.push(body.letter); }
+  if (body.season !== undefined) { updates.push("season = ?"); params.push(body.season); }
+  if (body.sub_group !== undefined) { updates.push("sub_group = ?"); params.push(body.sub_group); }
+  if (body.languages !== undefined) { updates.push("languages = ?"); params.push(JSON.stringify(body.languages)); }
+  if (body.has_fonts !== undefined) { updates.push("has_fonts = ?"); params.push(body.has_fonts ? 1 : 0); }
+  if (body.episode_count !== undefined) { updates.push("episode_count = ?"); params.push(body.episode_count); }
+
+  if (updates.length === 0) return c.json({ error: "No fields to update" }, 400);
+
+  updates.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')");
+  params.push(id);
+
+  db.prepare(`UPDATE shared_archives SET ${updates.join(", ")} WHERE id = ?`).run(...params);
+
+  invalidateCache();
+  log("info", `[sharing] updated archive: ${id}`);
+
+  const updated = db.prepare<SharedArchiveRow, [string]>("SELECT * FROM shared_archives WHERE id = ?").get(id);
+  return c.json(updated);
+});
+
+/** GET /archives/:id/preview — list files inside the archive ZIP. */
+sharing.get("/archives/:id/preview", async (c) => {
+  if (!checkApiKey(c)) return c.json({ error: "Unauthorized" }, 401);
+
+  const db = getDb();
+  const row = db
+    .prepare<{ r2_key: string | null; local_path: string | null; status: string; filename: string }, [string]>(
+      "SELECT r2_key, local_path, status, filename FROM shared_archives WHERE id = ?"
+    )
+    .get(c.req.param("id"));
+
+  if (!row) return c.json({ error: "Not found" }, 404);
+
+  let buf: Buffer | null = null;
+  if (row.local_path && existsSync(row.local_path)) {
+    buf = Buffer.from(readFileSync(row.local_path));
+  } else if (row.r2_key) {
+    // Download from R2 public URL for preview
+    const url = buildDownloadUrl(row.r2_key);
+    if (url) {
+      try {
+        // SSRF protection: ensure URL targets expected R2 host
+        const parsedUrl = new URL(url);
+        const expectedHost = new URL(config.r2PublicUrl).host;
+        if (parsedUrl.host !== expectedHost) {
+          log("warn", `[sharing/preview] blocked SSRF: host ${parsedUrl.host} != ${expectedHost}`);
+          return c.json({ error: "Invalid archive URL" }, 400);
+        }
+        const resp = await fetch(url);
+        if (resp.ok) buf = Buffer.from(await resp.arrayBuffer());
+      } catch (e) {
+        log("warn", `[sharing/preview] failed to fetch from R2:`, e);
+      }
+    }
+  }
+
+  if (!buf) return c.json({ error: "Archive file not accessible" }, 404);
+
+  const names = extractZipFilenames(buf);
+  const files = names.map(name => {
+    const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+    return { name, ext, isSubtitle: SUBTITLE_EXTENSIONS.has(ext) };
+  });
+
+  return c.json({
+    filename: row.filename,
+    totalFiles: files.length,
+    subtitleFiles: files.filter(f => f.isSubtitle).length,
+    files,
+  });
+});
+
+/** GET /archives/:id/download-file — download the archive file directly (admin). */
+sharing.get("/archives/:id/download-file", async (c) => {
+  if (!checkApiKey(c)) return c.json({ error: "Unauthorized" }, 401);
+
+  const db = getDb();
+  const row = db
+    .prepare<{ r2_key: string | null; local_path: string | null; filename: string; status: string }, [string]>(
+      "SELECT r2_key, local_path, filename, status FROM shared_archives WHERE id = ?"
+    )
+    .get(c.req.param("id"));
+
+  if (!row) return c.json({ error: "Not found" }, 404);
+
+  // Try local file first
+  if (row.local_path && existsSync(row.local_path)) {
+    const buf = readFileSync(row.local_path);
+    return new Response(buf, {
+      headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${encodeURIComponent(row.filename)}"`,
+        "Content-Length": String(buf.length),
+      },
+    });
+  }
+
+  // Redirect to R2 download URL
+  if (row.r2_key) {
+    const url = buildDownloadUrl(row.r2_key);
+    if (url) return c.redirect(url, 302);
+  }
+
+  return c.json({ error: "File not accessible" }, 404);
+});
+
+/** POST /upload-to-existing — upload to an existing anime/season directory (admin). */
+sharing.post("/upload-to-existing", async (c) => {
+  if (!checkApiKey(c)) return c.json({ error: "Unauthorized" }, 401);
+
+  const form = await c.req.formData();
+  const file = form.get("file") as File | null;
+  const targetAnimeName = form.get("name_cn") as string | null;
+  const targetLetter = form.get("letter") as string | null;
+  const targetSeason = form.get("season") as string | null;
+  const subGroup = form.get("sub_group") as string | null;
+  const languagesStr = form.get("languages") as string | null;
+  const hasFonts = form.get("has_fonts") === "true";
+
+  if (!file) return c.json({ error: "Missing file" }, 400);
+  if (!targetAnimeName || !targetLetter || !targetSeason || !subGroup || !languagesStr) {
+    return c.json({ error: "Missing required fields (name_cn, letter, season, sub_group, languages)" }, 400);
+  }
+  if (file.size > config.sharingMaxFileSize) {
+    return c.json({ error: `File too large (max ${Math.round(config.sharingMaxFileSize / 1024 / 1024)}MB)` }, 400);
+  }
+
+  let languages: string[];
+  try { languages = JSON.parse(languagesStr); } catch { return c.json({ error: "Invalid languages format" }, 400); }
+
+  const buf = Buffer.from(await file.arrayBuffer());
+  const { valid, error, fileCount, episodeCount, subtitleFormats } = await validateZipContents(buf);
+  if (!valid) return c.json({ error: `Invalid zip: ${error}` }, 400);
+
+  const id = nanoid();
+
+  if (isR2Configured()) {
+    const r2Key = `${targetLetter}/${targetAnimeName}/${targetSeason}/${file.name}`;
+    const downloadUrl = buildDownloadUrl(r2Key);
+    await r2Upload(r2Key, buf, "application/zip", buf.length);
+
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO shared_archives (id, name_cn, letter, season, sub_group, languages, subtitle_format,
+        episode_count, has_fonts, filename, r2_key, file_size, file_count, download_url, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published')
+    `).run(
+      id, targetAnimeName, targetLetter, targetSeason, subGroup,
+      JSON.stringify(languages), JSON.stringify(subtitleFormats),
+      episodeCount, hasFonts ? 1 : 0, file.name, r2Key, file.size, fileCount, downloadUrl,
+    );
+
+    invalidateCache();
+    log("info", `[sharing] uploaded to existing: ${file.name} → ${r2Key}`);
+    return c.json({ id, download_url: downloadUrl, filename: file.name, status: "published" });
+  } else {
+    // No R2 — save locally as pending
+    const pendingDir = join(config.pendingDir, id);
+    mkdirSync(pendingDir, { recursive: true });
+    const localPath = join(pendingDir, file.name);
+    await Bun.write(localPath, buf);
+
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO shared_archives (id, name_cn, letter, season, sub_group, languages, subtitle_format,
+        episode_count, has_fonts, filename, file_size, file_count, local_path, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+    `).run(
+      id, targetAnimeName, targetLetter, targetSeason, subGroup,
+      JSON.stringify(languages), JSON.stringify(subtitleFormats),
+      episodeCount, hasFonts ? 1 : 0, file.name, file.size, fileCount, localPath,
+    );
+
+    invalidateCache();
+    log("info", `[sharing] uploaded to existing (pending): ${file.name}`);
+    return c.json({ id, status: "pending", filename: file.name });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════

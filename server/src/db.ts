@@ -77,6 +77,29 @@ CREATE TABLE IF NOT EXISTS upload_rate_limit (
   count       INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (ip_hash, upload_date)
 );
+
+-- Processing logs for subset requests
+CREATE TABLE IF NOT EXISTS processing_logs (
+  id            TEXT PRIMARY KEY,
+  filename      TEXT NOT NULL,
+  client_ip     TEXT,
+  code          INTEGER NOT NULL,
+  messages      TEXT,
+  missing_fonts TEXT,
+  font_count    INTEGER DEFAULT 0,
+  file_size     INTEGER DEFAULT 0,
+  elapsed_ms    INTEGER DEFAULT 0,
+  processed_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_processing_logs_date ON processing_logs(processed_at);
+CREATE INDEX IF NOT EXISTS idx_processing_logs_code ON processing_logs(code);
+
+-- Track resolved (uploaded) missing fonts
+CREATE TABLE IF NOT EXISTS resolved_fonts (
+  font_name   TEXT PRIMARY KEY,
+  resolved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
 `;
 
 // ─── DB singleton ─────────────────────────────────────────────────────────────

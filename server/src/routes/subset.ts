@@ -13,6 +13,7 @@ import { subsetFont } from "../lib/subsetter.js";
 import { computeCacheKey, getFromCache, setInCache } from "../cache.js";
 import { config, log } from "../config.js";
 import type { Context } from "hono";
+import { recordProcessingLog } from "./logs.js";
 
 const subset = new Hono();
 
@@ -32,6 +33,10 @@ subset.post("/", async (c) => {
     if (contentType.includes("multipart/form-data")) {
       const form = await c.req.formData();
       const files = form.getAll("file");
+      const MAX_BATCH_FILES = 100;
+      if (files.length > MAX_BATCH_FILES) {
+        return sendResult(c, CODE.CLIENT_ERROR, [`Too many files (max ${MAX_BATCH_FILES})`], null);
+      }
       for (const f of files) {
         if (typeof f !== "string" && "arrayBuffer" in f) {
           const file = f as File;
@@ -69,12 +74,40 @@ subset.post("/", async (c) => {
   // Single-file response (classic fontInAss format)
   if (fileEntries.length === 1) {
     const { name, bytes } = fileEntries[0];
+    const clientIp = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? "unknown";
     try {
       const result = await processSubtitle(name, bytes, { fontsCheck, clearFonts, srtFormat, srtStyle });
-      log("info", `[subset] ${name} → code=${result.code} size=${result.data?.length ?? 0}B elapsed=${Date.now()-reqStart}ms`);
+      const elapsed = Date.now() - reqStart;
+      log("info", `[subset] ${name} → code=${result.code} size=${result.data?.length ?? 0}B elapsed=${elapsed}ms`);
+
+      // Record processing log
+      const missingFonts = (result.messages ?? [])
+        .filter(m => m.startsWith("Missing font:"))
+        .map(m => m.replace(/^Missing font:\s*\[?|\]?$/g, ""));
+      recordProcessingLog({
+        filename: name,
+        clientIp,
+        code: result.code,
+        messages: result.messages,
+        missingFonts,
+        fontCount: 0,
+        fileSize: bytes.length,
+        elapsedMs: elapsed,
+      });
+
       return sendResult(c, result.code, result.messages, result.data);
     } catch (e) {
       log("error", `[subset] ${name} unhandled error:`, e);
+      recordProcessingLog({
+        filename: name,
+        clientIp,
+        code: CODE.SERVER_ERROR,
+        messages: ["Internal server error"],
+        missingFonts: [],
+        fontCount: 0,
+        fileSize: bytes.length,
+        elapsedMs: Date.now() - reqStart,
+      });
       return sendResult(c, CODE.SERVER_ERROR, ["Internal server error"], null);
     }
   }
@@ -82,6 +115,7 @@ subset.post("/", async (c) => {
   // Batch: process all files, return JSON array
   const parts: { filename: string; code: number; messages: string[] | null; data: number[] | null }[] = [];
   let anyError = false;
+  const clientIp = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? "unknown";
 
   // Process with concurrency limit to avoid resource exhaustion on large batches
   const BATCH_CONCURRENCY = Math.min(config.subsetConcurrency, fileEntries.length);
@@ -93,17 +127,29 @@ subset.post("/", async (c) => {
       )
     );
     for (let j = 0; j < results.length; j++) {
-      const { name } = chunk[j];
+      const { name, bytes } = chunk[j];
       if (results[j].status === "fulfilled") {
         const r = (results[j] as PromiseFulfilledResult<ProcessResult>).value;
         if (r.code >= 400) anyError = true;
         log("info", `[subset] batch[${i+j}] ${name} → code=${r.code} size=${r.data?.length ?? 0}B`);
         parts.push({ filename: name, code: r.code, messages: r.messages, data: r.data ? Array.from(r.data) : null });
+
+        const missingFonts = (r.messages ?? [])
+          .filter(m => m.startsWith("Missing font:"))
+          .map(m => m.replace(/^Missing font:\s*\[?|\]?$/g, ""));
+        recordProcessingLog({
+          filename: name, clientIp, code: r.code, messages: r.messages, missingFonts,
+          fontCount: 0, fileSize: bytes.length, elapsedMs: Date.now() - reqStart,
+        });
       } else {
         anyError = true;
         const err = (results[j] as PromiseRejectedResult).reason;
         log("error", `[subset] batch[${i+j}] ${name} rejected:`, err);
         parts.push({ filename: name, code: CODE.SERVER_ERROR, messages: ["Internal server error"], data: null });
+        recordProcessingLog({
+          filename: name, clientIp, code: CODE.SERVER_ERROR, messages: ["Internal server error"], missingFonts: [],
+          fontCount: 0, fileSize: bytes.length, elapsedMs: Date.now() - reqStart,
+        });
       }
     }
   }

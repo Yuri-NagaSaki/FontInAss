@@ -3,6 +3,8 @@ services:
     build: .
     container_name: fontinass-local
     restart: unless-stopped
+    # SECURITY: Bound to 127.0.0.1 (localhost only). To expose remotely,
+    # change to "0.0.0.0:3300:3000" and ensure API_KEY is set.
     ports:
       - "127.0.0.1:3300:3000"
     volumes:
@@ -27,3 +29,5 @@ services:
       - SHARING_RATE_LIMIT=${SHARING_RATE_LIMIT:-3}
       - SHARING_CACHE_TTL=${SHARING_CACHE_TTL:-300}
       - PENDING_DIR=/app/data/pending
+      - LOG_DIR=/app/data/logs
+      - AUTO_INDEX_INTERVAL_HOURS=${AUTO_INDEX_INTERVAL_HOURS:-4}

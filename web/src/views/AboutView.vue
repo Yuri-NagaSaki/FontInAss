@@ -198,13 +198,5 @@ const { t } = useI18n();
 
     </div>
 
-    <!-- ─── Footer note ────────────────────────────────────────────────────── -->
-    <p class="text-center text-xs text-ink-300 pb-4">
-      FontInAss · Built with 🌸 by
-      <a href="https://catcat.blog" target="_blank" rel="noopener" class="hover:text-sakura-400 transition-colors">catcat.blog</a>
-      ·
-      <a href="https://github.com/Yuri-NagaSaki/FontInAss" target="_blank" rel="noopener" class="hover:text-sakura-400 transition-colors">AGPL-3.0</a>
-    </p>
-
   </div>
 </template>
