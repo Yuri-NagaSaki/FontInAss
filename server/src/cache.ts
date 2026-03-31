@@ -7,8 +7,9 @@
  */
 
 import { config } from "./config.js";
+import { createHash } from "node:crypto";
 
-const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const CACHE_TTL_MS = 2 * 24 * 60 * 60 * 1000; // 48 hours
 const CACHE_MAX_BYTES = 256 * 1024 * 1024;      // 256 MB total cap regardless of entry count
 
 interface CacheEntry {
@@ -39,18 +40,12 @@ function evict(): void {
   }
 }
 
-export async function computeCacheKey(
+export function computeCacheKey(
   subtitleBytes: Uint8Array,
   options: Record<string, string | boolean>,
-): Promise<string> {
+): string {
   const optStr = JSON.stringify(options, Object.keys(options).sort());
-  const optBytes = new TextEncoder().encode(optStr);
-  const combined = new Uint8Array(subtitleBytes.length + optBytes.length);
-  combined.set(subtitleBytes, 0);
-  combined.set(optBytes, subtitleBytes.length);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", combined);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return "subset:" + hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+  return "subset:" + createHash("sha256").update(subtitleBytes).update(optStr).digest("hex");
 }
 
 export function getFromCache(key: string): Uint8Array | null {
@@ -75,10 +70,9 @@ export function setInCache(key: string, data: Uint8Array): void {
   }
   store.set(key, { data, expires: Date.now() + CACHE_TTL_MS });
   totalBytes += data.length;
-  // Schedule eviction asynchronously — runs before the next macrotask, so memory
-  // stays bounded without blocking the current call stack on large cache churn.
+  // Evict synchronously to prevent memory spikes from concurrent requests
   if (store.size > config.cacheMaxEntries || totalBytes > CACHE_MAX_BYTES) {
-    queueMicrotask(() => evict());
+    evict();
   }
 }
 

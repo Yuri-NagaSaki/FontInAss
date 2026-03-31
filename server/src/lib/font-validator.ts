@@ -75,13 +75,28 @@ export function validateFontFile(
     const isTTC = data[0] === 0x74 && data[1] === 0x74 && data[2] === 0x63 && data[3] === 0x66;
 
     if (isTTC) {
+      // TTC/OTC is a container with multiple font faces sharing tables.
+      // opentype.js cannot parse TTC containers at all — it only handles
+      // individual TTF/OTF. We validate the TTC header structure instead:
+      //   [tag 4B][version 4B][numFonts 4B][offsets numFonts×4B]
       const view = new DataView(buf);
       const numFonts = view.getUint32(8, false);
       if (numFonts === 0 || numFonts > 256) {
         return { valid: false, error: "Invalid TTC: bad face count" };
       }
-      // Validate at least the first face can be parsed
-      opentype.parse(buf, { lowMemory: true });
+      // Verify each face offset points to a valid TTF/OTF signature
+      for (let i = 0; i < numFonts; i++) {
+        const offset = view.getUint32(12 + i * 4, false);
+        if (offset + 4 > buf.byteLength) {
+          return { valid: false, error: `Invalid TTC: face ${i} offset out of range` };
+        }
+        const sig = new Uint8Array(buf, offset, 4);
+        const isTTF = sig[0] === 0x00 && sig[1] === 0x01 && sig[2] === 0x00 && sig[3] === 0x00;
+        const isOTF = sig[0] === 0x4f && sig[1] === 0x54 && sig[2] === 0x54 && sig[3] === 0x4f;
+        if (!isTTF && !isOTF) {
+          return { valid: false, error: `Invalid TTC: face ${i} has bad signature` };
+        }
+      }
     } else {
       const font = opentype.parse(buf, { lowMemory: true });
       if (!font) {

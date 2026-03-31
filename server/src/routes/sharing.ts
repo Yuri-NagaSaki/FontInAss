@@ -12,7 +12,7 @@
  */
 
 import { Hono } from "hono";
-import { config, log, safeCompare } from "../config.js";
+import { config, log, checkApiKey } from "../config.js";
 import { getDb } from "../db.js";
 import { r2Upload, r2Delete, isR2Configured } from "../lib/r2-storage.js";
 import { createHash } from "node:crypto";
@@ -75,17 +75,6 @@ function getCachedArchives(): { data: SharedArchiveRow[]; etag: string } {
   const etag = createHash("sha256").update(JSON.stringify(rows)).digest("hex").slice(0, 16);
   _archivesCache = { data: rows, etag, ts: now };
   return { data: rows, etag };
-}
-
-// ─── Auth middleware helper ───────────────────────────────────────────────────
-
-function checkApiKey(c: any): boolean {
-  if (!config.apiKey) return true;
-  const provided =
-    c.req.header("x-api-key") ??
-    c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
-  if (!provided) return false;
-  return safeCompare(provided, config.apiKey);
 }
 
 // ─── Helper: generate nanoid-like ID ──────────────────────────────────────────
@@ -292,7 +281,7 @@ sharing.post("/upload", async (c) => {
     return c.json({ error: `File too large (max ${Math.round(config.sharingMaxFileSize / 1024 / 1024)}MB)` }, 400);
   }
 
-  const meta = JSON.parse(metaStr) as {
+  let meta: {
     name_cn: string;
     letter: string;
     season: string;
@@ -300,6 +289,11 @@ sharing.post("/upload", async (c) => {
     languages: string[];
     has_fonts: boolean;
   };
+  try {
+    meta = JSON.parse(metaStr);
+  } catch {
+    return c.json({ error: "Invalid metadata JSON" }, 400);
+  }
 
   if (!meta.name_cn || !meta.letter || !meta.season || !meta.sub_group || !meta.languages?.length) {
     return c.json({ error: "Missing required metadata fields" }, 400);
@@ -541,7 +535,7 @@ sharing.get("/archives/:id/preview", async (c) => {
           log("warn", `[sharing/preview] blocked SSRF: host ${parsedUrl.host} != ${expectedHost}`);
           return c.json({ error: "Invalid archive URL" }, 400);
         }
-        const resp = await fetch(url);
+        const resp = await fetch(url, { signal: AbortSignal.timeout(30_000) });
         if (resp.ok) buf = Buffer.from(await resp.arrayBuffer());
       } catch (e) {
         log("warn", `[sharing/preview] failed to fetch from R2:`, e);
@@ -758,7 +752,7 @@ sharing.post("/import-index", (c) => {
     try {
       // Phase 1: Fetch root index
       await stream.writeSSE({ data: JSON.stringify({ phase: "index", message: "Fetching index.json..." }) });
-      const indexRes = await fetch("https://raw.githubusercontent.com/Yuri-NagaSaki/AnimeSub/main/index.json");
+      const indexRes = await fetch("https://raw.githubusercontent.com/Yuri-NagaSaki/AnimeSub/main/index.json", { signal: AbortSignal.timeout(30_000) });
       if (!indexRes.ok) throw new Error(`Failed to fetch index.json: ${indexRes.status}`);
       const index = (await indexRes.json()) as {
         total_anime: number;
@@ -794,7 +788,7 @@ sharing.post("/import-index", (c) => {
             // Fetch the sub_entry's own metadata.json to find its seasons
             const subMetaUrl = `https://raw.githubusercontent.com/Yuri-NagaSaki/AnimeSub/main/${encodedSubPath}/metadata.json`;
             try {
-              const subMetaRes = await fetch(subMetaUrl);
+              const subMetaRes = await fetch(subMetaUrl, { signal: AbortSignal.timeout(30_000) });
               if (subMetaRes.ok) {
                 const subMeta = (await subMetaRes.json()) as { seasons?: string[]; season?: string };
                 const seasons = subMeta.seasons ?? (subMeta.season ? [subMeta.season] : []);
@@ -814,7 +808,7 @@ sharing.post("/import-index", (c) => {
           try {
             const encodedPath = basePath.split("/").map(encodeURIComponent).join("/");
             const metaUrl = `https://raw.githubusercontent.com/Yuri-NagaSaki/AnimeSub/main/${encodedPath}/${season}/metadata.json`;
-            const metaRes = await fetch(metaUrl);
+            const metaRes = await fetch(metaUrl, { signal: AbortSignal.timeout(30_000) });
             if (!metaRes.ok) {
               log("warn", `[sharing] metadata fetch failed: ${metaUrl} → ${metaRes.status}`);
               errors++;
@@ -861,7 +855,7 @@ sharing.post("/import-index", (c) => {
               // Download zip and upload to R2
               const zipUrl = `https://raw.githubusercontent.com/Yuri-NagaSaki/AnimeSub/main/${encodedPath}/${season}/${encodeURIComponent(archive.filename)}`;
               try {
-                const zipRes = await fetch(zipUrl);
+                const zipRes = await fetch(zipUrl, { signal: AbortSignal.timeout(60_000) });
                 if (!zipRes.ok) {
                   log("warn", `[sharing] zip download failed: ${zipUrl} → ${zipRes.status}`);
                   errors++;

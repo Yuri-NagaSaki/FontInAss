@@ -1,27 +1,6 @@
 <script setup lang="ts">
 import { FolderOpen, FolderClosed, FileText, Loader2, MoreHorizontal, Layers } from "lucide-vue-next";
-
-interface R2Node {
-  prefix: string;
-  name: string;
-  type: "folder" | "file";
-  size?: number;
-  indexed?: boolean;
-  loading?: boolean;
-  expanded?: boolean;
-  children?: R2Node[];
-  cursor?: string | null;
-  hasMore?: boolean;
-  loadingMore?: boolean;
-}
-
-interface IndexProg {
-  active: boolean;
-  indexed: number;
-  skipped: number;
-  total: number;
-  phase: string;
-}
+import type { R2Node, IndexProg } from "../types";
 
 const props = defineProps<{
   node: R2Node;

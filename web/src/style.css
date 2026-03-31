@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Class-based dark mode variant for Tailwind v4 */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ─── Sakura × Digital Design System ─────────────────────────────────────── */
 
 @theme {
@@ -75,6 +78,66 @@
   --shadow-xl:  0 16px 48px oklch(70% 0.20 350 / 0.18);
 }
 
+/* ─── Dark Mode Overrides ─────────────────────────────────────────────────── */
+/*  Applied when <html class="dark"> is set.                                   */
+/*  OKLCH lets us shift lightness while preserving hue & chroma.               */
+
+.dark {
+  color-scheme: dark;
+
+  /* Sakura Pink — darken light end, brighten dark end for readability */
+  --color-sakura-50:  oklch(22%  0.015 355);
+  --color-sakura-100: oklch(27%  0.030 352);
+  --color-sakura-200: oklch(35%  0.050 350);
+  --color-sakura-300: oklch(55%  0.100 348);
+  --color-sakura-600: oklch(70%  0.175 343);
+  --color-sakura-700: oklch(62%  0.160 342);
+
+  /* Sky Blue — same approach */
+  --color-sky-50:  oklch(22%  0.020 222);
+  --color-sky-100: oklch(27%  0.035 222);
+  --color-sky-200: oklch(35%  0.060 222);
+
+  /* Soft Green (success) */
+  --color-mint-50:  oklch(22%  0.020 155);
+  --color-mint-100: oklch(27%  0.040 155);
+  --color-mint-200: oklch(35%  0.060 153);
+
+  /* Warm Rose (error) */
+  --color-rose-50:  oklch(22%  0.020  20);
+  --color-rose-100: oklch(27%  0.035  20);
+  --color-rose-200: oklch(35%  0.055  20);
+
+  /* Amber (warning) */
+  --color-amber-50:  oklch(22%  0.025  75);
+  --color-amber-100: oklch(27%  0.050  75);
+  --color-amber-200: oklch(35%  0.070  72);
+
+  /* Ink — invert the neutral scale */
+  --color-ink-950: oklch(95%  0.005 355);
+  --color-ink-900: oklch(90%  0.006 355);
+  --color-ink-800: oklch(82%  0.008 355);
+  --color-ink-700: oklch(75%  0.008 355);
+  --color-ink-600: oklch(65%  0.010 355);
+  --color-ink-500: oklch(55%  0.010 355);
+  --color-ink-400: oklch(48%  0.010 355);
+  --color-ink-300: oklch(40%  0.008 355);
+  --color-ink-200: oklch(30%  0.008 355);
+  --color-ink-100: oklch(24%  0.006 355);
+  --color-ink-50:  oklch(20%  0.005 355);
+
+  /* Surfaces */
+  --color-surface:        oklch(18%  0.008 355);
+  --color-surface-raised: oklch(22%  0.008 355);
+  --color-bg:             oklch(14%  0.010 355);
+
+  /* Shadows — darker and more opaque */
+  --shadow-sm:  0 1px 4px oklch(0% 0 0 / 0.30);
+  --shadow-md:  0 4px 16px oklch(0% 0 0 / 0.40);
+  --shadow-lg:  0 8px 32px oklch(0% 0 0 / 0.45);
+  --shadow-xl:  0 16px 48px oklch(0% 0 0 / 0.50);
+}
+
 /* ─── Base Reset ─────────────────────────────────────────────────────────── */
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -102,6 +165,9 @@ body {
   border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-sakura-300); }
+
+/* Dark mode transitions — smooth toggle */
+html { transition: background-color 0.3s, color 0.3s; }
 
 /* ─── Focus ring ─────────────────────────────────────────────────────────── */
 

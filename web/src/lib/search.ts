@@ -29,7 +29,7 @@ export function buildSearchIndex(archives: SearchableArchive[]): void {
       ],
       store: true,
     },
-    charset: "cjk" as any,
+    charset: "cjk" as any, // FlexSearch types don't include CJK charset
   });
 
   allDocs.clear();

@@ -3,27 +3,30 @@ import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from "vue"
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import {
-  FolderOpen, FileText, Upload, Trash2,
+  FolderOpen, Trash2,
   RefreshCcw, Search, CheckCircle2, Loader2,
-  KeyRound, Database, CloudUpload, AlertTriangle, X,
-  Share2, Clock, Check, XCircle, FileArchive, DatabaseZap,
+  KeyRound, Database, CloudUpload, AlertTriangle,
+  Share2,
 } from "lucide-vue-next";
 import {
-  listFonts, uploadFonts, deleteFont, deleteFontsBatch,
-  browseR2, indexR2Keys, listR2Keys, getFontStats, scanLocalFonts, repairFontKeys,
+  listFonts, deleteFont, deleteFontsBatch,
+  browseR2, indexR2Keys, listR2Keys,
   getApiKey, setApiKey,
-  listPendingArchives, uploadSharedArchive, approveArchive, rejectArchive, importIndexSSE,
 } from "../api/client";
-import type { FontItem, BrowseFile, FontStats, ScanLocalResult, RepairKeysResult, SharedArchive } from "../api/client";
+import type { FontItem, BrowseFile } from "../api/client";
 import KButton from "../components/KButton.vue";
-import KInput from "../components/KInput.vue";
 import KBadge from "../components/KBadge.vue";
 import KSpinner from "../components/KSpinner.vue";
 import KEmpty from "../components/KEmpty.vue";
 import R2NodeRow from "../components/R2NodeRow.vue";
+import SharingAdminPane from "../components/SharingAdminPane.vue";
+import FontUploadPane from "../components/FontUploadPane.vue";
+import IndexStatsPane from "../components/IndexStatsPane.vue";
 import { useIndexState } from "../composables/useIndexState";
+import { formatBytes } from "../lib/format";
+import type { R2Node } from "../types";
 
-const { t, locale } = useI18n();
+const { t } = useI18n();
 
 // ── API Key lock ──────────────────────────────────────────────────────────────
 const apiKey = ref(getApiKey());
@@ -36,25 +39,9 @@ const unlockWithKey = () => {
   apiKey.value = k;
   loadRoot();
   loadFontList();
-  loadStats();
 };
 
 // ── R2 Browser ────────────────────────────────────────────────────────────────
-interface R2Node {
-  prefix: string;   // Full prefix path
-  name: string;     // Display name (last segment)
-  type: "folder" | "file";
-  size?: number;
-  indexed?: boolean;
-  loading?: boolean;
-  expanded?: boolean;
-  children?: R2Node[];
-  cursor?: string | null;     // For pagination inside this folder
-  hasMore?: boolean;
-  loadingMore?: boolean;
-  fileCount?: number;         // Known file count from this level
-}
-
 const r2Tree = ref<R2Node[]>([]);
 const browserLoading = ref(false);
 const browserError = ref<string | null>(null);
@@ -201,7 +188,6 @@ const indexAllUnder = async (prefix: string) => {
 
     prog.phase = "done";
     loadFontList();
-    loadStats();
     // Refresh tree to show indexed status
     loadRoot();
   } catch (e) {
@@ -211,9 +197,6 @@ const indexAllUnder = async (prefix: string) => {
     prog.active = false;
   }
 };
-
-const formatBytes = (n: number) =>
-  n < 1024 ? `${n} B` : n < 1048576 ? `${(n/1024).toFixed(1)} KB` : `${(n/1048576).toFixed(2)} MB`;
 
 // ── Indexed Font List ─────────────────────────────────────────────────────────
 const fonts = ref<FontItem[]>([]);
@@ -314,272 +297,21 @@ const styleLabel = (f: FontItem) => {
   return t("regular");
 };
 
-// ── Upload ─────────────────────────────────────────────────────────────────────
-const DEFAULT_UPLOAD_DIR = "CatCat-Fonts/";
-const uploadDir       = ref(DEFAULT_UPLOAD_DIR);
-const uploadQueue     = ref<{ file: File; status: "pending" | "uploading" | "ok" | "error"; msg?: string }[]>([]);
-const uploadDragActive = ref(false);
-let   uploadDragCounter = 0;
-const uploadRunning   = ref(false);
-const uploadSummary   = ref<{ ok: number; fail: number } | null>(null);
-const uploadBatchDone = ref(0);
-const uploadBatchTotal = ref(0);
-const dropErrorMsg    = ref("");
-let   dropErrorTimer  = 0;
-
-const FONT_EXTS = new Set(["ttf", "otf", "ttc", "otc"]);
-const isFont = (f: File) => FONT_EXTS.has(f.name.split(".").pop()?.toLowerCase() ?? "");
-
-const addToQueue = (files: FileList | File[]) => {
-  const valid = Array.from(files).filter(isFont);
-  if (!valid.length) {
-    clearTimeout(dropErrorTimer);
-    dropErrorMsg.value = t("noFontFiles");
-    dropErrorTimer = window.setTimeout(() => { dropErrorMsg.value = ""; }, 2500);
-    return;
-  }
-  uploadSummary.value = null;
-  uploadQueue.value.push(...valid.map(f => ({ file: f, status: "pending" as const })));
-};
-
-const clearQueue = () => {
-  uploadQueue.value = uploadQueue.value.filter(e => e.status === "uploading");
-  uploadSummary.value = null;
-};
-
-const startUpload = async () => {
-  if (uploadRunning.value) return;
-  const pending = uploadQueue.value.filter(e => e.status === "pending");
-  if (!pending.length) return;
-  uploadRunning.value = true;
-  uploadBatchTotal.value = pending.length;
-  uploadBatchDone.value = 0;
-
-  const dir = uploadDir.value.trim().replace(/\/?$/, "/");
-  let ok = 0;
-  for (const entry of pending) {
-    entry.status = "uploading";
-    try {
-      const results = await uploadFonts([entry.file], dir);
-      const res = results[0];
-      if (res?.error) { entry.status = "error"; entry.msg = res.error; }
-      else { entry.status = "ok"; ok++; }
-    } catch (e) {
-      entry.status = "error";
-      entry.msg = String(e instanceof Error ? e.message : e);
-    }
-    uploadBatchDone.value++;
-  }
-  uploadRunning.value = false;
-  uploadSummary.value = { ok, fail: pending.length - ok };
-  if (ok > 0) loadFontList(true);
-};
-
-const onUploadDragEnter = (e: DragEvent) => { e.preventDefault(); uploadDragCounter++; uploadDragActive.value = true; };
-const onUploadDragOver  = (e: DragEvent) => e.preventDefault();
-const onUploadDragLeave = (e: DragEvent) => { e.preventDefault(); if (--uploadDragCounter <= 0) { uploadDragActive.value = false; uploadDragCounter = 0; } };
-const onUploadDrop      = (e: DragEvent) => { e.preventDefault(); uploadDragActive.value = false; uploadDragCounter = 0; if (e.dataTransfer?.files) addToQueue(e.dataTransfer.files); };
-const onUploadClick     = () => { const i = document.createElement("input"); i.type = "file"; i.multiple = true; i.accept = ".ttf,.otf,.ttc,.otc"; i.onchange = (e) => { const f = (e.target as HTMLInputElement).files; if (f) addToQueue(f); }; i.click(); };
-
 // ── Tabs ──────────────────────────────────────────────────────────────────────
 type Tab = "list" | "browser" | "upload" | "stats" | "sharing";
 const activeTab = ref<Tab>("list");
-
-// ── Index Stats ────────────────────────────────────────────────────────────────
-const fontStats = ref<FontStats | null>(null);
-const statsLoading = ref(false);
-
-const loadStats = async () => {
-  statsLoading.value = true;
-  try {
-    fontStats.value = await getFontStats();
-  } catch {
-    // silent
-  } finally {
-    statsLoading.value = false;
-  }
-};
-
-// ── Scan Local (local-only feature) ───────────────────────────────────────────
-const scanLocalState = ref<"idle" | "running" | "done">("idle");
-const scanLocalResult = ref<ScanLocalResult | null>(null);
-const scanLocalError = ref<string | null>(null);
-
-const doScanLocal = async () => {
-  if (scanLocalState.value === "running") return;
-  scanLocalState.value = "running";
-  scanLocalResult.value = null;
-  scanLocalError.value = null;
-  try {
-    const result = await scanLocalFonts();
-    scanLocalResult.value = result;
-    scanLocalState.value = "done";
-    loadFontList(true);
-    loadStats();
-    setTimeout(() => { scanLocalState.value = "idle"; }, 5000);
-  } catch (e) {
-    scanLocalError.value = e instanceof Error ? e.message : String(e);
-    scanLocalState.value = "idle";
-  }
-};
-
-// ── Repair Keys (fix stale R2-migrated paths) ─────────────────────────────────
-const repairState = ref<"idle" | "running" | "done">("idle");
-const repairResult = ref<RepairKeysResult | null>(null);
-const repairError = ref<string | null>(null);
-
-const doRepairKeys = async () => {
-  if (repairState.value === "running") return;
-  repairState.value = "running";
-  repairResult.value = null;
-  repairError.value = null;
-  try {
-    const result = await repairFontKeys();
-    repairResult.value = result;
-    repairState.value = "done";
-    loadFontList(true);
-    loadStats();
-    setTimeout(() => { repairState.value = "idle"; }, 8000);
-  } catch (e) {
-    repairError.value = e instanceof Error ? e.message : String(e);
-    repairState.value = "idle";
-  }
-};
-
-// ── Sharing Admin ─────────────────────────────────────────────────────────────
-const pendingArchives = ref<SharedArchive[]>([]);
-const pendingLoading = ref(false);
-
-// Admin upload form
-const sharingUploadForm = ref({
-  name_cn: "",
-  letter: "",
-  season: "S1",
-  sub_group: "",
-  languages: [] as string[],
-  has_fonts: false,
-});
-const sharingUploadFile = ref<File | null>(null);
-const sharingUploadSubmitting = ref(false);
-const sharingUploadDetected = ref("");
-const sharingDropHover = ref(false);
-const SHARING_LANG_OPTIONS = ["chs", "cht", "jpn", "chs_jpn", "cht_jpn", "sc", "tc", "eng"];
-
-// Import state
-const sharingImportProgress = ref<{ phase: string; message?: string; current?: number; total?: number; name?: string; imported?: number; skipped?: number; errors?: number; elapsed?: string }>({ phase: "idle" });
-const sharingIsImporting = ref(false);
-
-const loadPending = async () => {
-  pendingLoading.value = true;
-  try {
-    pendingArchives.value = await listPendingArchives();
-  } catch (e) {
-    console.error("Failed to load pending:", e);
-  } finally {
-    pendingLoading.value = false;
-  }
-};
-
-const handleApprove = async (id: string) => {
-  try {
-    await approveArchive(id);
-    await loadPending();
-  } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
-  }
-};
-
-const handleReject = async (id: string) => {
-  try {
-    await rejectArchive(id);
-    await loadPending();
-  } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
-  }
-};
-
-function sharingToggleLang(lang: string) {
-  const idx = sharingUploadForm.value.languages.indexOf(lang);
-  if (idx >= 0) sharingUploadForm.value.languages.splice(idx, 1);
-  else sharingUploadForm.value.languages.push(lang);
-}
-
-function sharingHandleFileSelect(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (file) {
-    sharingUploadFile.value = file;
-    sharingUploadDetected.value = formatBytes(file.size);
-  }
-}
-
-function sharingHandleDrop(e: DragEvent) {
-  e.preventDefault();
-  sharingDropHover.value = false;
-  const file = e.dataTransfer?.files[0];
-  if (file && file.name.endsWith(".zip")) {
-    sharingUploadFile.value = file;
-    sharingUploadDetected.value = formatBytes(file.size);
-  }
-}
-
-function sharingResetForm() {
-  sharingUploadForm.value = { name_cn: "", letter: "", season: "S1", sub_group: "", languages: [], has_fonts: false };
-  sharingUploadFile.value = null;
-  sharingUploadDetected.value = "";
-}
-
-async function sharingSubmitUpload() {
-  if (!sharingUploadFile.value || sharingUploadSubmitting.value) return;
-  const meta = {
-    name_cn: sharingUploadForm.value.name_cn,
-    letter: sharingUploadForm.value.letter.toUpperCase(),
-    season: sharingUploadForm.value.season,
-    sub_group: sharingUploadForm.value.sub_group,
-    languages: sharingUploadForm.value.languages,
-    has_fonts: sharingUploadForm.value.has_fonts,
-  };
-  sharingUploadSubmitting.value = true;
-  try {
-    await uploadSharedArchive(sharingUploadFile.value, meta);
-    toast.success(t("sharingPublished"));
-    sharingResetForm();
-  } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
-  } finally {
-    sharingUploadSubmitting.value = false;
-  }
-}
-
-function sharingStartImport() {
-  sharingIsImporting.value = true;
-  sharingImportProgress.value = { phase: "index", message: "Starting import..." };
-  importIndexSSE(
-    (data) => { sharingImportProgress.value = data; },
-    () => { sharingIsImporting.value = false; loadPending(); },
-    (err) => { sharingIsImporting.value = false; sharingImportProgress.value = { phase: "error", message: err }; },
-  );
-}
-
-// Auto-generate letter from anime name
-watch(() => sharingUploadForm.value.name_cn, (name) => {
-  if (name && !sharingUploadForm.value.letter) {
-    const first = name.charAt(0).toUpperCase();
-    if (/[A-Z]/.test(first)) sharingUploadForm.value.letter = first;
-  }
-});
 
 onMounted(() => {
   if (hasKey.value) {
     loadRoot();
     loadFontList(true);
-    loadStats();
-    loadPending();
   }
 });
 
 onBeforeUnmount(() => {
   io?.disconnect();
+  clearTimeout(searchTimer);
+  clearTimeout(deleteNoticeTimer);
 });
 </script>
 
@@ -628,7 +360,7 @@ onBeforeUnmount(() => {
               v-model="lockKeyInput"
               type="password"
               :placeholder="t('apiKeyPlaceholder')"
-              class="w-full h-11 rounded-xl border border-ink-200 bg-white px-4 pr-10 font-mono text-sm text-ink-900 placeholder:text-ink-300 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-all duration-150"
+              class="w-full h-11 rounded-xl border border-ink-200 bg-surface px-4 pr-10 font-mono text-sm text-ink-900 placeholder:text-ink-300 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-all duration-150"
               @keyup.enter="unlockWithKey"
             />
             <KeyRound class="pointer-events-none absolute right-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-300" />
@@ -642,14 +374,7 @@ onBeforeUnmount(() => {
 
         <!-- Hint -->
         <p class="text-center text-[11px] leading-relaxed text-ink-300">
-          <template v-if="locale.startsWith('zh')">
-            在 <code class="rounded bg-ink-100 px-1 py-0.5 font-mono text-[10px] text-ink-500">.env</code> 文件中配置
-            <code class="rounded bg-ink-100 px-1 py-0.5 font-mono text-[10px] text-ink-500">API_KEY</code>
-          </template>
-          <template v-else>
-            Set <code class="rounded bg-ink-100 px-1 py-0.5 font-mono text-[10px] text-ink-500">API_KEY</code>
-            in your <code class="rounded bg-ink-100 px-1 py-0.5 font-mono text-[10px] text-ink-500">.env</code> file
-          </template>
+          {{ t('lockHint', { apiKey: 'API_KEY', envFile: '.env' }) }}
         </p>
       </div>
 
@@ -669,7 +394,7 @@ onBeforeUnmount(() => {
         ]"
         :key="tab.id"
         class="flex items-center gap-1.5 h-8 px-4 rounded-xl text-sm font-medium transition-all duration-150"
-        :class="activeTab === tab.id ? 'bg-white shadow-sm text-ink-900' : 'text-ink-500 hover:text-ink-700'"
+        :class="activeTab === tab.id ? 'bg-surface shadow-sm text-ink-900' : 'text-ink-500 hover:text-ink-700'"
         @click="activeTab = tab.id as Tab"
       >
         <component :is="tab.icon" class="w-3.5 h-3.5" />
@@ -685,7 +410,7 @@ onBeforeUnmount(() => {
           <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
           <input
             v-model="fontSearch"
-            class="w-full h-9 pl-9 pr-3 rounded-xl border border-ink-200 text-sm text-ink-700 placeholder:text-ink-400 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-all bg-white"
+            class="w-full h-9 pl-9 pr-3 rounded-xl border border-ink-200 text-sm text-ink-700 placeholder:text-ink-400 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-all bg-surface"
             :placeholder="t('searchFonts')"
           />
         </div>
@@ -739,6 +464,7 @@ onBeforeUnmount(() => {
 
             <button
               class="w-7 h-7 rounded-lg flex items-center justify-center text-ink-400 hover:text-rose-500 hover:bg-rose-50 transition-colors shrink-0"
+              :aria-label="t('delete')"
               @click.stop="deleteSingle(font.id)"
             ><Trash2 class="w-3.5 h-3.5" /></button>
           </div>
@@ -835,419 +561,13 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- ─── Tab: Upload ───────────────────────────────────────────────────── -->
-    <div v-if="activeTab === 'upload'" class="flex flex-col gap-4">
-      <!-- Upload dir config -->
-      <div class="card p-4 flex items-center gap-3">
-        <FolderOpen class="w-4 h-4 text-sakura-400 shrink-0" />
-        <span class="text-sm font-medium text-ink-700 shrink-0">{{ t('uploadDir') }}</span>
-        <input
-          v-model="uploadDir"
-          class="flex-1 h-8 px-3 rounded-lg border border-ink-200 text-sm font-mono text-ink-700 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-all"
-          placeholder="CatCat-Fonts/"
-        />
-      </div>
-
-      <!-- Drop zone -->
-      <div
-        class="drop-zone cursor-pointer py-10 flex flex-col items-center gap-3 transition-all"
-        :class="uploadDragActive ? 'ring-2 ring-sakura-400 scale-[1.01]' : ''"
-        @dragenter="onUploadDragEnter"
-        @dragover="onUploadDragOver"
-        @dragleave="onUploadDragLeave"
-        @drop="onUploadDrop"
-        @click="onUploadClick"
-      >
-        <CloudUpload class="w-8 h-8 text-sakura-400" :stroke-width="1.5" />
-        <p class="font-medium text-ink-700">{{ t('dropFontsHere') }}</p>
-        <p class="text-xs text-ink-400">{{ t('fontsHint') }}</p>
-      </div>
-
-      <!-- Drop error inline -->
-      <Transition name="fade">
-        <div v-if="dropErrorMsg" class="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-600">
-          <AlertTriangle class="w-3.5 h-3.5 shrink-0" />
-          {{ dropErrorMsg }}
-        </div>
-      </Transition>
-
-      <!-- Queue -->
-      <div v-if="uploadQueue.length > 0" class="flex flex-col gap-2">
-        <div class="flex items-center gap-2 min-h-[32px]">
-          <!-- Summary / live progress / idle count -->
-          <Transition name="chip-text" mode="out-in">
-            <span v-if="uploadSummary" key="summary" class="flex items-center gap-1.5 text-sm font-medium"
-              :class="uploadSummary.fail > 0 ? 'text-amber-600' : 'text-mint-600'">
-              <CheckCircle2 class="w-3.5 h-3.5 shrink-0" />
-              {{ uploadSummary.ok }} {{ locale.startsWith('zh') ? '个已上传' : 'uploaded' }}
-              <template v-if="uploadSummary.fail > 0">
-                · <span class="text-rose-500">{{ uploadSummary.fail }} {{ locale.startsWith('zh') ? '失败' : 'failed' }}</span>
-              </template>
-            </span>
-            <span v-else-if="uploadRunning" key="progress" class="flex items-center gap-1.5 text-sm font-medium text-sakura-500">
-              <Loader2 class="w-3.5 h-3.5 shrink-0 animate-spin-slow" />
-              {{ uploadBatchDone }}/{{ uploadBatchTotal }}
-            </span>
-            <span v-else key="count" class="text-sm text-ink-500">{{ uploadQueue.length }} {{ t('files', uploadQueue.length) }}</span>
-          </Transition>
-          <div class="flex-1" />
-          <KButton variant="primary" size="sm" :disabled="uploadRunning" @click="startUpload">
-            <Upload class="w-3.5 h-3.5" />
-            {{ uploadRunning ? t('fontUploading') : t('startUpload') }}
-          </KButton>
-          <KButton variant="ghost" size="sm" :disabled="uploadRunning" @click="clearQueue">
-            <X class="w-3.5 h-3.5" />{{ t('clearQueue') }}
-          </KButton>
-        </div>
-
-        <div class="flex flex-col gap-1 max-h-72 overflow-y-auto">
-          <div
-            v-for="(entry, i) in uploadQueue"
-            :key="i"
-            class="flex items-center gap-3 px-3 py-2 rounded-xl text-sm"
-            :class="{
-              'bg-white border border-ink-100': entry.status === 'pending',
-              'bg-sakura-50 border border-sakura-100': entry.status === 'uploading',
-              'bg-mint-50 border border-mint-200': entry.status === 'ok',
-              'bg-rose-50 border border-rose-200': entry.status === 'error',
-            }"
-          >
-            <Loader2 v-if="entry.status === 'uploading'" class="w-4 h-4 text-sakura-400 animate-spin-slow shrink-0" />
-            <CheckCircle2 v-else-if="entry.status === 'ok'" class="w-4 h-4 text-mint-500 shrink-0" />
-            <AlertTriangle v-else-if="entry.status === 'error'" class="w-4 h-4 text-rose-500 shrink-0" />
-            <FileText v-else class="w-4 h-4 text-ink-400 shrink-0" />
-            <span class="flex-1 truncate font-mono text-xs text-ink-700">{{ entry.file.name }}</span>
-            <span v-if="entry.msg" class="text-xs text-rose-500 truncate max-w-32">{{ entry.msg }}</span>
-            <span class="text-xs text-ink-400 shrink-0">{{ formatBytes(entry.file.size) }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+    <FontUploadPane v-if="activeTab === 'upload'" @uploaded="loadFontList(true)" />
 
     <!-- ─── Tab: Index Stats ───────────────────────────────────────────────── -->
-    <div v-if="activeTab === 'stats'" class="flex flex-col gap-4">
-      <div class="card p-4 flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <CheckCircle2 class="w-4 h-4 text-mint-400" />
-          <span class="font-display font-semibold text-ink-900">{{ t('indexStats') }}</span>
-        </div>
-        <KButton variant="ghost" size="sm" :disabled="statsLoading" @click="loadStats">
-          <RefreshCcw class="w-3.5 h-3.5" :class="statsLoading && 'animate-spin-slow'" />
-          {{ t('refresh') }}
-        </KButton>
-      </div>
-
-      <div v-if="statsLoading && !fontStats" class="flex justify-center py-8">
-        <KSpinner />
-      </div>
-
-      <template v-else-if="fontStats">
-        <!-- Total -->
-        <div class="card p-5 flex items-center gap-4">
-          <div class="w-12 h-12 rounded-2xl bg-sakura-100 flex items-center justify-center shrink-0">
-            <Database class="w-6 h-6 text-sakura-500" />
-          </div>
-          <div>
-            <p class="text-sm text-ink-500">{{ t('totalIndexed') }}</p>
-            <p class="text-3xl font-display font-bold text-ink-900">{{ fontStats.total.toLocaleString() }}</p>
-          </div>
-        </div>
-
-        <!-- Per-folder breakdown -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div
-            v-for="folder in fontStats.folders"
-            :key="folder.prefix"
-            class="card p-4 flex items-center gap-3"
-          >
-            <FolderOpen class="w-5 h-5 text-amber-400 shrink-0" />
-            <div class="flex-1 min-w-0">
-              <p class="text-xs font-mono text-ink-500 truncate">{{ folder.prefix }}</p>
-              <p class="text-lg font-semibold text-ink-900">{{ folder.count.toLocaleString() }}</p>
-            </div>
-            <!-- progress bar relative to total -->
-            <div class="w-16 bg-ink-100 rounded-full h-1.5 shrink-0">
-              <div
-                class="bg-sakura-400 h-1.5 rounded-full transition-all duration-500"
-                :style="{ width: fontStats!.total > 0 ? `${(folder.count / fontStats!.total * 100).toFixed(1)}%` : '0%' }"
-              />
-            </div>
-          </div>
-        </div>
-
-        <!-- Active index operations -->
-        <template v-if="Object.keys(indexProgress).some(k => indexProgress[k]?.active)">
-          <div class="card p-4">
-            <p class="text-sm font-medium text-ink-700 mb-3 flex items-center gap-2">
-              <Loader2 class="w-3.5 h-3.5 animate-spin text-sakura-400" />
-              {{ t('indexRunning') }}
-            </p>
-            <div v-for="(prog, prefix) in indexProgress" :key="prefix" class="flex items-center gap-3 text-sm py-1">
-              <span class="font-mono text-ink-500 flex-1 truncate">{{ prefix || '(all)' }}</span>
-              <span v-if="prog.phase === 'listing'" class="text-xs text-amber-500">{{ t('phaseListing') }}</span>
-              <span v-else-if="prog.phase === 'indexing'" class="text-xs text-sky-500">{{ prog.indexed }}/{{ prog.total }}</span>
-              <span v-else class="text-xs text-mint-500">{{ t('phaseDone') }}</span>
-            </div>
-          </div>
-        </template>
-      </template>
-
-      <KEmpty v-else :title="t('statsEmpty')" />
-
-      <!-- Scan Local — discover and index all fonts in FONT_DIR -->
-      <div class="card p-5 flex flex-col gap-3 border-dashed">
-        <div class="flex items-center gap-2.5">
-          <Search class="w-4 h-4 text-sky-400" />
-          <h3 class="font-display font-semibold text-ink-800 text-sm">扫描本地字体目录</h3>
-        </div>
-        <p class="text-sm text-ink-500">扫描 <code class="text-xs bg-ink-100 px-1.5 py-0.5 rounded font-mono">FONT_DIR</code> 下所有字体文件，批量建立索引。已索引的文件会自动跳过。</p>
-
-        <!-- Result inline -->
-        <Transition name="chip-text" mode="out-in">
-          <div
-            v-if="scanLocalState === 'done' && scanLocalResult"
-            key="done"
-            class="flex items-center gap-2 text-sm text-mint-600"
-          >
-            <CheckCircle2 class="w-4 h-4 shrink-0" />
-            <span>新增 {{ scanLocalResult.indexed }} 个，跳过 {{ scanLocalResult.skipped }} 个<template v-if="scanLocalResult.purged">，清理失效 {{ scanLocalResult.purged }} 个</template>，共 {{ scanLocalResult.total }} 个字体文件</span>
-          </div>
-          <div v-else-if="scanLocalError" key="err" class="text-sm text-rose-500 flex items-center gap-1.5">
-            <span>扫描失败: {{ scanLocalError }}</span>
-          </div>
-          <span v-else key="spacer" />
-        </Transition>
-
-        <KButton
-          variant="secondary"
-          size="sm"
-          :disabled="scanLocalState === 'running'"
-          class="w-fit"
-          @click="doScanLocal"
-        >
-          <Loader2 v-if="scanLocalState === 'running'" class="w-3.5 h-3.5 animate-spin" />
-          <Search v-else class="w-3.5 h-3.5" />
-          {{ scanLocalState === 'running' ? '扫描中…' : '扫描并索引' }}
-        </KButton>
-      </div>
-
-      <!-- Repair Keys — fix stale paths after migrating from R2 -->
-      <div class="card p-5 flex flex-col gap-3 border-dashed">
-        <div class="flex items-center gap-2.5">
-          <RefreshCcw class="w-4 h-4 text-amber-400" />
-          <h3 class="font-display font-semibold text-ink-800 text-sm">修复索引路径</h3>
-        </div>
-        <p class="text-sm text-ink-500">检测并修复数据库中的失效路径（如从 Cloudflare R2 迁移后残留的 <code class="text-xs bg-ink-100 px-1.5 py-0.5 rounded font-mono">r2/</code> 前缀）。会自动尝试重新定位文件，无法找到的条目将被删除。</p>
-
-        <Transition name="chip-text" mode="out-in">
-          <div
-            v-if="repairState === 'done' && repairResult"
-            key="done"
-            class="flex items-center gap-2 text-sm text-mint-600"
-          >
-            <CheckCircle2 class="w-4 h-4 shrink-0" />
-            <span>修复 {{ repairResult.updated }} 个，删除失效 {{ repairResult.deleted }} 个，正常 {{ repairResult.ok }} 个，共 {{ repairResult.total }} 个</span>
-          </div>
-          <div v-else-if="repairError" key="err" class="text-sm text-rose-500 flex items-center gap-1.5">
-            <span>修复失败: {{ repairError }}</span>
-          </div>
-          <span v-else key="spacer" />
-        </Transition>
-
-        <KButton
-          variant="secondary"
-          size="sm"
-          :disabled="repairState === 'running'"
-          class="w-fit"
-          @click="doRepairKeys"
-        >
-          <Loader2 v-if="repairState === 'running'" class="w-3.5 h-3.5 animate-spin" />
-          <RefreshCcw v-else class="w-3.5 h-3.5" />
-          {{ repairState === 'running' ? '修复中…' : '修复索引路径' }}
-        </KButton>
-      </div>
-    </div>
+    <IndexStatsPane v-if="activeTab === 'stats'" :index-progress="indexProgress" @changed="loadFontList(true)" />
 
     <!-- ─── Tab: Sharing Admin ─────────────────────────────────────────────── -->
-    <div v-if="activeTab === 'sharing'" class="flex flex-col gap-5">
-
-      <!-- Pending Review -->
-      <div class="card overflow-hidden">
-        <div class="flex items-center gap-2.5 px-5 py-4 border-b border-sakura-100/60">
-          <Clock class="w-4 h-4 text-amber-500" />
-          <h3 class="font-display font-semibold text-ink-800 text-sm">{{ t('sharingPendingReview') }}</h3>
-          <div class="flex-1" />
-          <KButton variant="ghost" size="sm" :disabled="pendingLoading" @click="loadPending">
-            <RefreshCcw class="w-3.5 h-3.5" :class="pendingLoading && 'animate-spin-slow'" />
-          </KButton>
-        </div>
-
-        <div v-if="pendingLoading && pendingArchives.length === 0" class="flex justify-center py-8">
-          <KSpinner />
-        </div>
-
-        <div v-else-if="pendingArchives.length === 0" class="px-5 py-8 text-center">
-          <p class="text-sm text-ink-400">{{ t('sharingNoPending') }}</p>
-        </div>
-
-        <div v-else class="divide-y divide-sakura-50">
-          <div
-            v-for="pa in pendingArchives"
-            :key="pa.id"
-            class="flex items-center gap-3 px-5 py-3 hover:bg-sakura-50/30 transition-colors duration-150"
-          >
-            <FileArchive class="w-5 h-5 text-amber-400 shrink-0" />
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium text-ink-800 truncate">
-                {{ pa.name_cn }} {{ pa.season }} · {{ pa.sub_group }}
-              </p>
-              <p class="text-xs text-ink-400">
-                {{ pa.contributor || 'anonymous' }} · {{ formatBytes(pa.file_size) }} · {{ pa.filename }}
-              </p>
-            </div>
-            <KButton variant="ghost" size="sm" @click="handleApprove(pa.id)">
-              <Check class="w-4 h-4 text-mint-500" />
-              {{ t('sharingApprove') }}
-            </KButton>
-            <KButton variant="ghost" size="sm" @click="handleReject(pa.id)">
-              <XCircle class="w-4 h-4 text-rose-400" />
-              {{ t('sharingReject') }}
-            </KButton>
-          </div>
-        </div>
-      </div>
-
-      <!-- Admin Upload (inline form) -->
-      <div class="card p-5 flex flex-col gap-4">
-        <div class="flex items-center gap-2.5">
-          <Upload class="w-4 h-4 text-sakura-500" />
-          <h3 class="font-display font-semibold text-ink-800 text-sm">{{ t('sharingAdminUploadTitle') }}</h3>
-        </div>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div class="sm:col-span-2">
-            <label class="text-xs font-medium text-ink-500 mb-1 block">{{ t('sharingAnimeName') }} *</label>
-            <input v-model="sharingUploadForm.name_cn" class="w-full px-3 py-2 rounded-xl border border-sakura-200 text-sm focus:outline-none focus:ring-2 focus:ring-sakura-300/50" />
-          </div>
-          <div>
-            <label class="text-xs font-medium text-ink-500 mb-1 block">{{ t('sharingLetter') }}</label>
-            <input v-model="sharingUploadForm.letter" maxlength="1" class="w-full px-3 py-2 rounded-xl border border-sakura-200 text-sm uppercase focus:outline-none focus:ring-2 focus:ring-sakura-300/50" />
-          </div>
-          <div>
-            <label class="text-xs font-medium text-ink-500 mb-1 block">{{ t('sharingSeason') }} *</label>
-            <select v-model="sharingUploadForm.season" class="w-full px-3 py-2 rounded-xl border border-sakura-200 text-sm focus:outline-none focus:ring-2 focus:ring-sakura-300/50">
-              <option v-for="s in ['S1','S2','S3','S4','Movie','SPs','OVA']" :key="s" :value="s">{{ s }}</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs font-medium text-ink-500 mb-1 block">{{ t('sharingSubGroup') }} *</label>
-            <input v-model="sharingUploadForm.sub_group" class="w-full px-3 py-2 rounded-xl border border-sakura-200 text-sm focus:outline-none focus:ring-2 focus:ring-sakura-300/50" />
-          </div>
-          <div>
-            <label class="text-xs font-medium text-ink-500 mb-1 block">{{ t('sharingLanguages') }} *</label>
-            <div class="flex flex-wrap gap-1.5">
-              <button
-                v-for="lang in SHARING_LANG_OPTIONS"
-                :key="lang"
-                @click="sharingToggleLang(lang)"
-                class="px-2.5 py-1 rounded-lg text-xs font-medium border transition-all duration-150"
-                :class="sharingUploadForm.languages.includes(lang)
-                  ? 'bg-sakura-100 border-sakura-300 text-sakura-700 shadow-sm'
-                  : 'bg-white border-ink-200 text-ink-400 hover:border-sakura-200'"
-              >
-                {{ lang }}
-              </button>
-            </div>
-          </div>
-          <div class="flex items-center">
-            <label class="flex items-center gap-2 text-sm text-ink-600">
-              <input type="checkbox" v-model="sharingUploadForm.has_fonts" class="rounded" />
-              {{ t('sharingHasFonts') }}
-            </label>
-          </div>
-        </div>
-
-        <!-- File drop zone -->
-        <div
-          @drop.prevent="sharingHandleDrop"
-          @dragover.prevent="sharingDropHover = true"
-          @dragleave.prevent="sharingDropHover = false"
-          @click="($refs.sharingFileInput as HTMLInputElement)?.click()"
-          class="border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all duration-200"
-          :class="sharingDropHover
-            ? 'border-sakura-400 bg-sakura-50/60 scale-[1.01]'
-            : sharingUploadFile
-              ? 'border-mint-300 bg-mint-50/30'
-              : 'border-sakura-200 hover:border-sakura-300 hover:bg-sakura-50/30'"
-        >
-          <div v-if="!sharingUploadFile" class="flex flex-col items-center gap-2">
-            <FileArchive class="w-8 h-8 text-ink-300" />
-            <p class="text-sm text-ink-500">{{ t('sharingDropZone') }}</p>
-            <p class="text-xs text-ink-300">{{ t('sharingMaxSize') }}</p>
-          </div>
-          <div v-else class="flex items-center gap-3 justify-center">
-            <FileArchive class="w-5 h-5 text-mint-500 shrink-0" />
-            <span class="text-sm text-ink-700 font-medium truncate">{{ sharingUploadFile.name }}</span>
-            <span class="text-xs text-ink-400">({{ sharingUploadDetected }})</span>
-          </div>
-          <input ref="sharingFileInput" type="file" accept=".zip" class="hidden" @change="sharingHandleFileSelect($event)" />
-        </div>
-
-        <div class="flex items-center gap-2">
-          <KButton
-            variant="primary"
-            size="sm"
-            :disabled="!sharingUploadForm.name_cn || !sharingUploadForm.sub_group || !sharingUploadForm.languages.length || !sharingUploadFile || sharingUploadSubmitting"
-            :loading="sharingUploadSubmitting"
-            @click="sharingSubmitUpload"
-          >
-            <Upload class="w-3.5 h-3.5" />
-            {{ t('sharingPublish') }}
-          </KButton>
-          <KButton variant="ghost" size="sm" @click="sharingResetForm">
-            <X class="w-3.5 h-3.5" />
-            {{ t('cancel') }}
-          </KButton>
-        </div>
-      </div>
-
-      <!-- Import Index -->
-      <div class="card p-5 flex flex-col gap-3">
-        <div class="flex items-center gap-2.5">
-          <DatabaseZap class="w-4 h-4 text-sakura-500" />
-          <h3 class="font-display font-semibold text-ink-800 text-sm">{{ t('sharingImportIndex') }}</h3>
-        </div>
-
-        <div v-if="sharingImportProgress.phase !== 'idle'" class="text-sm text-ink-500">
-          <p v-if="sharingImportProgress.message">{{ sharingImportProgress.message }}</p>
-          <p v-if="sharingImportProgress.current != null">
-            {{ sharingImportProgress.current }} / {{ sharingImportProgress.total }}
-            <span v-if="sharingImportProgress.name" class="text-ink-400">— {{ sharingImportProgress.name }}</span>
-          </p>
-          <p v-if="sharingImportProgress.phase === 'done'" class="text-mint-600 font-medium mt-1">
-            ✓ {{ t('sharingImportDone') }}:
-            {{ sharingImportProgress.imported }} imported,
-            {{ sharingImportProgress.skipped }} skipped,
-            {{ sharingImportProgress.errors }} errors
-            ({{ sharingImportProgress.elapsed }})
-          </p>
-          <p v-if="sharingImportProgress.phase === 'error'" class="text-rose-500 font-medium mt-1">
-            ✗ {{ sharingImportProgress.message }}
-          </p>
-        </div>
-
-        <KButton
-          variant="secondary"
-          size="sm"
-          class="w-fit"
-          :disabled="sharingIsImporting"
-          @click="sharingStartImport"
-        >
-          <Loader2 v-if="sharingIsImporting" class="w-3.5 h-3.5 animate-spin" />
-          <DatabaseZap v-else class="w-3.5 h-3.5" />
-          {{ sharingIsImporting ? t('sharingImporting') : t('sharingImportIndex') }}
-        </KButton>
-      </div>
-    </div>
+    <SharingAdminPane v-if="activeTab === 'sharing'" />
   </div>
   </div>
 </template>

@@ -315,14 +315,14 @@ export default {
   sharingBrowseExisting: "Browse Existing Anime",
   sharingSelectTarget: "Select Target",
   sharingSearchAnime: "Search anime name...",
-  sharingNoResults: "No matching anime found",
+  sharingNoAnimeResults: "No matching anime found",
   sharingSelectSeason: "Select Season",
   sharingSelectedTarget: "Selected Target",
   sharingInheritedInfo: "Info inherited automatically",
   sharingUploadMode: "Upload Mode",
 
   // ─── Archive preview & download ─────────────────────────────────────────────
-  sharingPreview: "Preview",
+  sharingPreviewBtn: "Preview",
   sharingDownload: "Download",
   sharingPreviewTitle: "Archive Contents Preview",
   sharingTotalFiles: "Total Files",
@@ -401,4 +401,35 @@ export default {
   publicUploadSuccess: "{n} font(s) uploaded successfully",
   publicUploadPartial: "{ok} succeeded, {fail} failed",
   publicUploadSecurityNote: "All uploads are strictly validated: extension check, file signature verification, and structural parsing to ensure only genuine font files are accepted.",
+
+  // ─── Theme ──────────────────────────────────────────────────────────────────
+  themeSystem: "System",
+  themeLight: "Light",
+  themeDark: "Dark",
+
+  // ─── Page titles (H5) ─────────────────────────────────────────────────────
+  pageTitle_home: "FontInAss — Subtitle Font Subsetting",
+  pageTitle_subset: "Subset · FontInAss",
+  pageTitle_fonts: "Font Management · FontInAss",
+  pageTitle_sharing: "Subtitle Sharing · FontInAss",
+  pageTitle_logs: "Logs · FontInAss",
+  pageTitle_cli: "CLI · FontInAss",
+  pageTitle_about: "About · FontInAss",
+  pageTitle_comments: "Comments · FontInAss",
+  pageTitle_upload: "Upload Fonts · FontInAss",
+
+  // ─── Inline i18n replacements (H6) ───────────────────────────────────────
+  saved: "Saved!",
+  retryDoneLabel: "Retried!",
+  missingFontsCount: "{n} missing font | {n} missing fonts",
+  missingFontsSummary: "{n} missing font(s)",
+  messagesCount: "{n} messages",
+  copiedLabel: "Copied!",
+  pendingUpload: "{n} pending",
+  clearLabel: "Clear",
+  facesCount: "{n} face(s)",
+  lockHintZh: "",
+  lockHintEn: "",
+  lockHint: "Set {apiKey} in your {envFile} file",
+  missingFontsHeader: "Missing Fonts — click to copy",
 }

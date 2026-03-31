@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, onActivated, onDeactivated } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { Cherry, Wand2, Database, Zap } from "lucide-vue-next";
@@ -6,6 +7,11 @@ import KButton from "../components/KButton.vue";
 
 const { t } = useI18n();
 const router = useRouter();
+
+// Pause petal animations when the view is cached but not visible (keep-alive)
+const animationsActive = ref(true);
+onActivated(() => { animationsActive.value = true; });
+onDeactivated(() => { animationsActive.value = false; });
 </script>
 
 <template>
@@ -15,10 +21,10 @@ const router = useRouter();
     <section class="relative text-center py-16 overflow-hidden">
       <!-- Background petals (decorative) -->
       <div class="absolute inset-0 pointer-events-none select-none overflow-hidden" aria-hidden="true">
-        <span class="absolute top-4 left-[8%]  text-5xl opacity-10 animate-petal-drift" style="animation-delay:-1s">🌸</span>
-        <span class="absolute top-12 right-[10%] text-4xl opacity-10 animate-petal-drift" style="animation-delay:-3.5s">🌸</span>
-        <span class="absolute bottom-6 left-[22%] text-3xl opacity-10 animate-petal-drift" style="animation-delay:-2s">🌸</span>
-        <span class="absolute bottom-4 right-[18%] text-5xl opacity-10 animate-petal-drift" style="animation-delay:-4.5s">🌸</span>
+        <span class="absolute top-4 left-[8%]  text-5xl opacity-10" :class="animationsActive && 'animate-petal-drift'" style="animation-delay:-1s">🌸</span>
+        <span class="absolute top-12 right-[10%] text-4xl opacity-10" :class="animationsActive && 'animate-petal-drift'" style="animation-delay:-3.5s">🌸</span>
+        <span class="absolute bottom-6 left-[22%] text-3xl opacity-10" :class="animationsActive && 'animate-petal-drift'" style="animation-delay:-2s">🌸</span>
+        <span class="absolute bottom-4 right-[18%] text-5xl opacity-10" :class="animationsActive && 'animate-petal-drift'" style="animation-delay:-4.5s">🌸</span>
       </div>
 
       <!-- Logo mark -->
@@ -100,7 +106,7 @@ const router = useRouter();
           :key="i"
           class="relative flex flex-col items-center text-center gap-3"
         >
-          <div class="relative w-16 h-16 rounded-2xl bg-white border-2 border-sakura-200 flex items-center justify-center shadow-[var(--shadow-sm)] z-10">
+          <div class="relative w-16 h-16 rounded-2xl bg-surface border-2 border-sakura-200 flex items-center justify-center shadow-[var(--shadow-sm)] z-10">
             <span class="font-display font-bold text-xl text-sakura-400">{{ step.num }}</span>
           </div>
           <p class="text-sm font-medium text-ink-700 leading-snug">{{ t(step.key + 'Title') }}</p>

@@ -17,7 +17,7 @@
  */
 
 import { Hono } from "hono";
-import { config, log, safeCompare } from "../config.js";
+import { config, log, requireApiKey } from "../config.js";
 import { getDb, deleteFontsByIds, findExistingKeys } from "../db.js";
 import { browseLevel, listAllKeys, scanAllFonts, getFile, fileExists, deleteFile, putFile } from "../storage.js";
 import { indexFont, parseFontMetadata } from "../lib/font-manager.js";
@@ -27,18 +27,7 @@ const fonts = new Hono();
 
 // ─── Auth middleware ───────────────────────────────────────────────────────────
 
-fonts.use("*", async (c, next) => {
-  if (!config.apiKey) return next(); // open access if not configured
-
-  const provided =
-    c.req.header("x-api-key") ??
-    c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
-
-  if (!provided || !safeCompare(provided, config.apiKey)) {
-    return c.json({ error: "Unauthorized" }, 401);
-  }
-  return next();
-});
+fonts.use("*", requireApiKey);
 
 // ─── Stats ────────────────────────────────────────────────────────────────────
 
@@ -47,13 +36,20 @@ fonts.get("/stats", (c) => {
     const db = getDb();
     const total = (db.prepare<{ cnt: number }, []>("SELECT COUNT(*) as cnt FROM font_files").get())?.cnt ?? 0;
 
-    // Count indexed fonts per top-level folder from DB
-    const allRows = db.prepare<{ r2_key: string }, []>("SELECT r2_key FROM font_files").all();
+    // Count indexed fonts per top-level folder using SQL aggregation (avoids loading all rows)
+    const folderRows = db.prepare<{ folder: string; cnt: number }, []>(`
+      SELECT
+        CASE WHEN instr(r2_key, '/') > 0
+             THEN substr(r2_key, 1, instr(r2_key, '/'))
+             ELSE '(root)/'
+        END AS folder,
+        COUNT(*) AS cnt
+      FROM font_files
+      GROUP BY folder
+    `).all();
     const folderCounts: Record<string, number> = {};
-    for (const row of allRows) {
-      const parts = row.r2_key.split("/");
-      const folder = parts.length > 1 ? parts[0] + "/" : "(root)/";
-      folderCounts[folder] = (folderCounts[folder] ?? 0) + 1;
+    for (const row of folderRows) {
+      folderCounts[row.folder] = row.cnt;
     }
 
     // Merge in filesystem directories so empty dirs (e.g. FounderTypeFonts with no binaries yet)

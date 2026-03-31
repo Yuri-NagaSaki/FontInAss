@@ -9,7 +9,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { compress } from "hono/compress";
 import { serveStatic } from "hono/bun";
-import { config, log, safeCompare } from "./config.js";
+import { config, log, checkApiKey, pruneOldLogs } from "./config.js";
 import { ensureFontDir } from "./storage.js";
 import { getDb } from "./db.js";
 import fontsRoute from "./routes/fonts.js";
@@ -17,12 +17,13 @@ import subsetRoute from "./routes/subset.js";
 import sharingRoute from "./routes/sharing.js";
 import logsRoute from "./routes/logs.js";
 import uploadRoute from "./routes/upload.js";
-import { startScheduler } from "./lib/scheduler.js";
+import { startScheduler, stopScheduler } from "./lib/scheduler.js";
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
 ensureFontDir();
 getDb(); // Initialize DB and run migrations
+pruneOldLogs(); // Clean up logs older than 30 days
 
 // ─── App ──────────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,25 @@ app.use("*", async (c, next) => {
 // Gzip / Brotli response compression (API JSON, HTML, JS, CSS, ASS files)
 app.use("*", compress());
 
+// Global request timeout (5 min — generous for batch subset operations)
+app.use("/api/*", async (c, next) => {
+  const timeoutMs = 5 * 60 * 1000;
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("Request timeout")), timeoutMs);
+  });
+  try {
+    await Promise.race([next(), timeout]);
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message === "Request timeout") {
+      return c.json({ error: "Request timeout" }, 504);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer!);
+  }
+});
+
 // Routes
 app.route("/api/fonts", fontsRoute);
 app.route("/api/subset", subsetRoute);
@@ -57,13 +77,8 @@ app.route("/api/logs", logsRoute);
 
 // Health check — requires API key when configured
 app.get("/api/health", (c) => {
-  if (config.apiKey) {
-    const provided =
-      c.req.header("x-api-key") ??
-      c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
-    if (!provided || !safeCompare(provided, config.apiKey)) {
-      return c.json({ error: "Unauthorized" }, 401);
-    }
+  if (!checkApiKey(c)) {
+    return c.json({ error: "Unauthorized" }, 401);
   }
   try {
     const db = getDb();
@@ -132,6 +147,18 @@ log("info", `API key: ${config.apiKey ? "configured" : "NONE (open access)"}`);
 
 // Start periodic auto-index + auto-dedup scheduler
 startScheduler();
+
+// ─── Graceful shutdown ────────────────────────────────────────────────────────
+
+function shutdown(signal: string) {
+  log("info", `Received ${signal}, shutting down...`);
+  stopScheduler();
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
 export default {
   port: config.port,
   fetch: app.fetch,

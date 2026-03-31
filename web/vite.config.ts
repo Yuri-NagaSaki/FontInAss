@@ -12,12 +12,13 @@ export default defineConfig({
     alias: { "@": path.resolve(__dirname, "./src") },
   },
   build: {
+    sourcemap: "hidden",
     rollupOptions: {
       output: {
         manualChunks: {
           "vendor-vue":   ["vue", "vue-router", "vue-i18n"],
           "vendor-icons": ["lucide-vue-next"],
-          // jszip + file-saver are dynamically imported on demand — no manual chunk needed
+          "vendor-waline": ["@waline/client"],
           "vendor-utils": ["@vueuse/core", "lodash-es"],
         },
       },

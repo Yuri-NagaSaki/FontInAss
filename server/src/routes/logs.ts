@@ -9,21 +9,10 @@
  */
 
 import { Hono } from "hono";
-import { config, log, safeCompare } from "../config.js";
+import { config, log, checkApiKey } from "../config.js";
 import { getDb } from "../db.js";
 
 const logs = new Hono();
-
-// ─── Auth helper (only for write operations) ──────────────────────────────────
-
-function checkApiKey(c: any): boolean {
-  if (!config.apiKey) return true;
-  const provided =
-    c.req.header("x-api-key") ??
-    c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
-  if (!provided) return false;
-  return safeCompare(provided, config.apiKey);
-}
 
 // ─── List processing logs ─────────────────────────────────────────────────────
 

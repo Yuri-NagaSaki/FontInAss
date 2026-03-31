@@ -12,10 +12,18 @@ import { lookupFontsBatch, loadFontBytes, type FontLookupResult } from "../lib/f
 import { subsetFont } from "../lib/subsetter.js";
 import { computeCacheKey, getFromCache, setInCache } from "../cache.js";
 import { config, log } from "../config.js";
+import { createHash } from "node:crypto";
 import type { Context } from "hono";
 import { recordProcessingLog } from "./logs.js";
 
 const subset = new Hono();
+
+/** Hash client IP for privacy (GDPR-compliant logging) */
+function hashIp(c: Context): string {
+  const raw = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? "unknown";
+  if (raw === "unknown") return raw;
+  return createHash("sha256").update(raw).digest("hex").slice(0, 12);
+}
 
 subset.post("/", async (c) => {
   const reqStart = Date.now();
@@ -74,7 +82,7 @@ subset.post("/", async (c) => {
   // Single-file response (classic fontInAss format)
   if (fileEntries.length === 1) {
     const { name, bytes } = fileEntries[0];
-    const clientIp = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? "unknown";
+    const clientIp = hashIp(c);
     try {
       const result = await processSubtitle(name, bytes, { fontsCheck, clearFonts, srtFormat, srtStyle });
       const elapsed = Date.now() - reqStart;
@@ -113,9 +121,9 @@ subset.post("/", async (c) => {
   }
 
   // Batch: process all files, return JSON array
-  const parts: { filename: string; code: number; messages: string[] | null; data: number[] | null }[] = [];
+  const parts: { filename: string; code: number; messages: string[] | null; data: string | null }[] = [];
   let anyError = false;
-  const clientIp = c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ?? c.req.header("x-real-ip") ?? "unknown";
+  const clientIp = hashIp(c);
 
   // Process with concurrency limit to avoid resource exhaustion on large batches
   const BATCH_CONCURRENCY = Math.min(config.subsetConcurrency, fileEntries.length);
@@ -132,7 +140,7 @@ subset.post("/", async (c) => {
         const r = (results[j] as PromiseFulfilledResult<ProcessResult>).value;
         if (r.code >= 400) anyError = true;
         log("info", `[subset] batch[${i+j}] ${name} → code=${r.code} size=${r.data?.length ?? 0}B`);
-        parts.push({ filename: name, code: r.code, messages: r.messages, data: r.data ? Array.from(r.data) : null });
+        parts.push({ filename: name, code: r.code, messages: r.messages, data: r.data ? Buffer.from(r.data).toString('base64') : null });
 
         const missingFonts = (r.messages ?? [])
           .filter(m => m.startsWith("Missing font:"))
@@ -184,7 +192,7 @@ async function processSubtitle(
   // Cache check
   let cacheKey = "";
   try {
-    cacheKey = await computeCacheKey(rawBytes, {
+    cacheKey = computeCacheKey(rawBytes, {
       fontsCheck: opts.fontsCheck,
       clearFonts: opts.clearFonts,
       srtFormat: opts.srtFormat,
@@ -285,27 +293,20 @@ async function processSubtitle(
     return { key, nameLower, targetWeight: parseInt(weightStr, 10), targetItalic: italicStr === "1" };
   });
 
-  if (opts.fontsCheck) {
-    let strictMatchMap: Map<string, FontLookupResult | null>;
-    try {
-      strictMatchMap = lookupFontsBatch(lookupReqs);
-    } catch (e) {
-      log("error", "[subset] fontsCheck DB error:", e);
-      return { code: CODE.SERVER_ERROR, messages: ["Database error"], data: null };
-    }
-    const missing = lookupReqs.filter(r => !strictMatchMap.get(r.key)).map(r => r.nameLower);
-    if (missing.length > 0) {
-      log("warn", `[subset:${filename}] fonts-check failed, missing: ${missing.map(n => displayName(n)).join(", ")}`);
-      return { code: CODE.MISSING_FONT, messages: missing.map(n => `Missing font: [${displayName(n)}]`), data: null };
-    }
-  }
-
   let matchMap: Map<string, FontLookupResult | null>;
   try {
     matchMap = lookupFontsBatch(lookupReqs);
   } catch (e) {
     log("error", "[subset] lookup DB error:", e);
     return { code: CODE.SERVER_ERROR, messages: ["Database error"], data: null };
+  }
+
+  if (opts.fontsCheck) {
+    const missing = lookupReqs.filter(r => !matchMap.get(r.key)).map(r => r.nameLower);
+    if (missing.length > 0) {
+      log("warn", `[subset:${filename}] fonts-check failed, missing: ${missing.map(n => displayName(n)).join(", ")}`);
+      return { code: CODE.MISSING_FONT, messages: missing.map(n => `Missing font: [${displayName(n)}]`), data: null };
+    }
   }
   for (const req of lookupReqs) {
     const m = matchMap.get(req.key);
@@ -361,14 +362,14 @@ async function processSubtitle(
       continue;
     }
 
-    for (const { key, unicodeSet, nameLower, weight, italic } of variants) {
+    await Promise.all(variants.map(async ({ key, unicodeSet, nameLower, weight, italic }) => {
       const match = matchMap.get(key)!;
       const tSub = Date.now();
       const fontDisplayName = originalNames[nameLower] ?? nameLower;
       const result = await subsetFont(fontBytes, match.fontIndex, fontDisplayName, weight, italic, unicodeSet);
       log("debug", `[subset:${filename}]   subsetted "${displayName(nameLower)}" in ${Date.now()-tSub}ms → ${result.encoded.length} encoded chars${result.error ? ` ERROR: ${result.error}` : ""}${result.missingGlyphs ? ` MISSING: ${result.missingGlyphs}` : ""}`);
       subsetResultMap.set(key, result);
-    }
+    }));
     // fontBytes goes out of scope here — eligible for GC before next file loads
   }
 

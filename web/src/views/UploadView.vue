@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   CloudUpload, FileText, CheckCircle2, AlertTriangle,
@@ -7,9 +7,11 @@ import {
 } from "lucide-vue-next";
 import { uploadFontsPublic } from "../api/client";
 import type { UploadResult } from "../api/client";
+import { formatBytes } from "../lib/format";
+import { FONT_EXTS } from "../lib/constants";
 import KButton from "../components/KButton.vue";
 
-const { t, locale } = useI18n();
+const { t } = useI18n();
 
 // ── Queue ─────────────────────────────────────────────────────────────────────
 interface QueueEntry {
@@ -29,11 +31,7 @@ const summary = ref<{ ok: number; fail: number } | null>(null);
 const dropError = ref("");
 let dropErrorTimer = 0;
 
-const FONT_EXTS = new Set(["ttf", "otf", "ttc", "otc"]);
 const isFont = (f: File) => FONT_EXTS.has(f.name.split(".").pop()?.toLowerCase() ?? "");
-
-const formatBytes = (n: number) =>
-  n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(2)} MB`;
 
 const pendingCount = computed(() => queue.value.filter(e => e.status === "pending").length);
 
@@ -110,6 +108,10 @@ const onClick = () => {
   };
   i.click();
 };
+
+onBeforeUnmount(() => {
+  clearTimeout(dropErrorTimer);
+});
 </script>
 
 <template>
@@ -167,7 +169,7 @@ const onClick = () => {
             {{ batchDone }}/{{ batchTotal }}
           </span>
           <span v-else key="count" class="text-sm text-ink-500">
-            {{ pendingCount }} {{ locale.startsWith('zh') ? '个待上传' : 'pending' }}
+            {{ t('pendingUpload', { n: pendingCount }) }}
           </span>
         </Transition>
         <div class="flex-1" />
@@ -176,7 +178,7 @@ const onClick = () => {
           {{ uploading ? t("publicUploadUploading") : t("publicUploadStart") }}
         </KButton>
         <KButton variant="ghost" size="sm" :disabled="uploading" @click="clearQueue">
-          <X class="w-3.5 h-3.5" />{{ locale.startsWith('zh') ? '清空' : 'Clear' }}
+          <X class="w-3.5 h-3.5" />{{ t('clearLabel') }}
         </KButton>
       </div>
 
@@ -187,7 +189,7 @@ const onClick = () => {
           :key="i"
           class="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm group"
           :class="{
-            'bg-white border border-ink-100': entry.status === 'pending',
+            'bg-surface border border-ink-100': entry.status === 'pending',
             'bg-sakura-50 border border-sakura-100': entry.status === 'uploading',
             'bg-mint-50 border border-mint-200': entry.status === 'ok',
             'bg-rose-50 border border-rose-200': entry.status === 'error',
@@ -201,7 +203,7 @@ const onClick = () => {
           <span class="flex-1 truncate font-mono text-xs text-ink-700">{{ entry.file.name }}</span>
 
           <span v-if="entry.result?.faces" class="text-xs text-mint-600 shrink-0">
-            {{ entry.result.faces }} {{ locale.startsWith('zh') ? '个字面' : 'face(s)' }}
+            {{ t('facesCount', { n: entry.result.faces }) }}
           </span>
           <span v-if="entry.msg" class="text-xs text-rose-500 truncate max-w-48">{{ entry.msg }}</span>
           <span class="text-xs text-ink-400 shrink-0">{{ formatBytes(entry.file.size) }}</span>

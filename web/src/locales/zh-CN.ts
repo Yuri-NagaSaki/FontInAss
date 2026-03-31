@@ -315,14 +315,14 @@ export default {
   sharingBrowseExisting: "浏览已有番剧",
   sharingSelectTarget: "选择目标",
   sharingSearchAnime: "搜索番剧名称...",
-  sharingNoResults: "未找到匹配的番剧",
+  sharingNoAnimeResults: "未找到匹配的番剧",
   sharingSelectSeason: "选择季度",
   sharingSelectedTarget: "已选目标",
   sharingInheritedInfo: "以下信息已自动继承",
   sharingUploadMode: "上传方式",
 
   // ─── Archive preview & download ─────────────────────────────────────────────
-  sharingPreview: "预览",
+  sharingPreviewBtn: "预览",
   sharingDownload: "下载",
   sharingPreviewTitle: "压缩包内容预览",
   sharingTotalFiles: "总文件数",
@@ -401,4 +401,33 @@ export default {
   publicUploadSuccess: "{n} 个字体上传成功",
   publicUploadPartial: "{ok} 个成功，{fail} 个失败",
   publicUploadSecurityNote: "所有上传文件经过严格验证：扩展名检查、文件签名校验、结构解析，确保仅接受合法字体文件。",
+
+  // ─── Theme ──────────────────────────────────────────────────────────────────
+  themeSystem: "跟随系统",
+  themeLight: "浅色模式",
+  themeDark: "深色模式",
+
+  // ─── Page titles (H5) ─────────────────────────────────────────────────────
+  pageTitle_home: "FontInAss — 字幕字体子集化",
+  pageTitle_subset: "字幕处理 · FontInAss",
+  pageTitle_fonts: "字体管理 · FontInAss",
+  pageTitle_sharing: "字幕分享 · FontInAss",
+  pageTitle_logs: "处理记录 · FontInAss",
+  pageTitle_cli: "CLI · FontInAss",
+  pageTitle_about: "关于 · FontInAss",
+  pageTitle_comments: "评论区 · FontInAss",
+  pageTitle_upload: "上传字体 · FontInAss",
+
+  // ─── Inline i18n replacements (H6) ───────────────────────────────────────
+  saved: "已保存",
+  retryDoneLabel: "重试完成",
+  missingFontsCount: "{n} 个字体未找到",
+  missingFontsSummary: "{n} 个字体未找到",
+  messagesCount: "{n} 条消息",
+  copiedLabel: "已复制",
+  pendingUpload: "{n} 个待上传",
+  clearLabel: "清空",
+  facesCount: "{n} 个字面",
+  lockHint: "在 {envFile} 文件中配置 {apiKey}",
+  missingFontsHeader: "缺少字体 — 点击复制名称",
 }

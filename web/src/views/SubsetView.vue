@@ -1,47 +1,24 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import copy from "copy-to-clipboard";
+import { copyToClipboard } from "../lib/clipboard";
 import {
   Cherry, Download, Trash2, RotateCcw,
   CheckCircle2, XCircle, Loader2, FileText, Copy, X, AlertTriangle, Info,
 } from "lucide-vue-next";
 import { subsetFile } from "../api/client";
+import { formatBytes } from "../lib/format";
 import KButton from "../components/KButton.vue";
 import KBadge from "../components/KBadge.vue";
 import KEmpty from "../components/KEmpty.vue";
+import { useSettings } from "../composables/useSettings";
 
-const { t, locale } = useI18n();
+const { t } = useI18n();
 
-// ─── Load settings from localStorage (managed by the navbar Settings panel) ──
-interface Settings {
-  SRT_FORMAT: string;
-  SRT_STYLE: string;
-  CLEAR_FONTS: boolean;
-  STRICT_MODE: boolean;
-  EXTRACT_FONTS: boolean;
-  CLEAR_AFTER_DOWNLOAD: boolean;
-}
+// ─── Shared settings (managed by the navbar Settings panel) ──────────────────
+const { settings } = useSettings();
 
-const settings = reactive<Settings>({
-  SRT_FORMAT: "",
-  SRT_STYLE: "",
-  CLEAR_FONTS: false,
-  STRICT_MODE: true,
-  EXTRACT_FONTS: false,
-  CLEAR_AFTER_DOWNLOAD: true,
-});
-
-const loadSettings = () => {
-  const saved = localStorage.getItem("fontinass_settings");
-  if (saved) { try { Object.assign(settings, JSON.parse(saved)); } catch {} }
-  const savedLocale = localStorage.getItem("locale");
-  if (savedLocale) locale.value = savedLocale;
-  else locale.value = navigator.language.startsWith("en") ? "en-US" : "zh-CN";
-};
-
-watch(locale, (v) => localStorage.setItem("locale", v));
 
 // ─── File list ────────────────────────────────────────────────────────────────
 interface FileEntry {
@@ -190,7 +167,6 @@ const onClickUpload = () => {
 };
 
 onMounted(() => {
-  loadSettings();
   window.addEventListener("dragenter", onDragEnter as EventListener);
   window.addEventListener("dragover",  onDragOver  as EventListener);
   window.addEventListener("dragleave", onDragLeave as EventListener);
@@ -210,7 +186,7 @@ onBeforeUnmount(() => {
 const copiedKeys = ref(new Set<string>());
 
 const copyMsg = (text: string, key?: string) => {
-  if (!copy(text)) { toast.error(t("copyFail")); return; }
+  if (!copyToClipboard(text)) { toast.error(t("copyFail")); return; }
   if (key) {
     copiedKeys.value = new Set([...copiedKeys.value, key]);
     setTimeout(() => {
@@ -228,8 +204,6 @@ const statusBadge = (entry: FileEntry): "loading" | "success" | "warning" | "err
   return "error";
 };
 
-const formatBytes = (n: number) =>
-  n < 1024 ? `${n} B` : n < 1048576 ? `${(n/1024).toFixed(1)} KB` : `${(n/1048576).toFixed(2)} MB`;
 
 const processingCount = computed(() => files.value.filter(f => f.code === null).length);
 const successCount    = computed(() => files.value.filter(f => f.code === 200).length);
@@ -265,15 +239,29 @@ const parseMessage = (msg: string): ParsedMessage => {
   return { type: 'other', raw: msg };
 };
 
-const parsedMessages = (entry: FileEntry) => entry.messages.map(parseMessage);
+// Cached per-entry parsed messages and missing font counts (avoid repeated computation in template)
+const parsedMessagesCache = computed(() => {
+  const map = new Map<string, ParsedMessage[]>();
+  for (const entry of files.value) {
+    map.set(entry.key, entry.messages.map(parseMessage));
+  }
+  return map;
+});
+const missingFontCountCache = computed(() => {
+  const map = new Map<string, number>();
+  for (const entry of files.value) {
+    map.set(entry.key, entry.messages.filter(m => m.startsWith('Missing font:')).length);
+  }
+  return map;
+});
 
-const missingFontCount = (entry: FileEntry) =>
-  entry.messages.filter(m => m.startsWith('Missing font:')).length;
+const parsedMessages = (entry: FileEntry) => parsedMessagesCache.value.get(entry.key) ?? [];
+const missingFontCount = (entry: FileEntry) => missingFontCountCache.value.get(entry.key) ?? 0;
 
 const summaryText = (entry: FileEntry) => {
   const mfc = missingFontCount(entry);
   if (mfc > 0 && mfc === entry.messages.length) {
-    return locale.value.startsWith('zh') ? `${mfc} 个字体未找到` : `${mfc} missing font${mfc > 1 ? 's' : ''}`;
+    return t('missingFontsSummary', { n: mfc });
   }
   return entry.messages[0];
 };
@@ -285,7 +273,7 @@ const summaryText = (entry: FileEntry) => {
   <transition name="fade">
     <div
       v-if="dragActive && files.length > 0"
-      class="fixed inset-0 z-50 pointer-events-none flex items-center justify-center bg-white/60 backdrop-blur-sm"
+      class="fixed inset-0 z-50 pointer-events-none flex items-center justify-center bg-surface/60 backdrop-blur-sm"
     >
       <div class="drop-zone w-64 h-40 flex flex-col items-center justify-center gap-3 pointer-events-none">
         <Cherry class="w-10 h-10 text-sakura-400" />
@@ -352,7 +340,7 @@ const summaryText = (entry: FileEntry) => {
             <RotateCcw v-else key="idle" class="w-3.5 h-3.5" />
           </Transition>
           <Transition name="chip-text" mode="out-in">
-            <span v-if="retryState === 'done'" key="done-lbl">{{ locale.startsWith("zh") ? "重试完成" : "Retried!" }}</span>
+            <span v-if="retryState === 'done'" key="done-lbl">{{ t("retryDoneLabel") }}</span>
             <span v-else key="idle-lbl">{{ t("retryFailed") }}</span>
           </Transition>
         </KButton>
@@ -373,7 +361,7 @@ const summaryText = (entry: FileEntry) => {
           :key="entry.key"
           class="rounded-2xl border overflow-hidden transition-colors duration-300"
           :class="{
-            'bg-white border-sakura-100':      entry.code === null,
+            'bg-surface border-sakura-100':      entry.code === null,
             'bg-mint-50/60 border-mint-200':   entry.code === 200,
             'bg-amber-50/60 border-amber-200': entry.code === 201,
             'bg-rose-50/60 border-rose-200':   entry.code !== null && entry.code !== 200 && entry.code !== 201,
@@ -406,11 +394,13 @@ const summaryText = (entry: FileEntry) => {
             <button
               v-if="entry.resultBytes"
               class="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-sky-500 hover:bg-sky-100 transition-colors"
+              :aria-label="t('download')"
               @click.stop="downloadEntry(entry)"
             ><Download class="w-4 h-4" /></button>
 
             <button
               class="shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-ink-400 hover:text-rose-500 hover:bg-rose-50 transition-colors"
+              :aria-label="t('delete')"
               @click.stop="removeFile(entry.key)"
             ><X class="w-4 h-4" /></button>
           </div>
@@ -440,7 +430,7 @@ const summaryText = (entry: FileEntry) => {
                 'text-ink-500':   entry.code === null,
               }">{{ summaryText(entry) }}</span>
               <span v-if="entry.messages.length > 1" class="shrink-0 text-xs text-ink-400">
-                {{ entry.messages.length }} {{ locale.startsWith('zh') ? '条消息' : 'messages' }}
+                {{ t('messagesCount', { n: entry.messages.length }) }}
               </span>
               <Info class="w-3.5 h-3.5 shrink-0 text-ink-300 transition-transform duration-200" :class="expandedMessages.has(entry.key) ? 'rotate-180' : ''" />
             </button>
@@ -451,7 +441,7 @@ const summaryText = (entry: FileEntry) => {
               <div v-if="missingFontCount(entry) > 0" class="mb-2">
                 <p class="text-[11px] text-ink-400 mb-2 font-medium uppercase tracking-wider flex items-center gap-1.5">
                   <XCircle class="w-3 h-3 text-rose-400" />
-                  {{ locale.startsWith('zh') ? '缺少字体 — 点击复制名称' : 'Missing Fonts — click to copy' }}
+                  {{ t('missingFontsHeader') }}
                 </p>
                 <div class="flex flex-wrap gap-1.5">
                   <button
@@ -471,7 +461,7 @@ const summaryText = (entry: FileEntry) => {
                     </Transition>
                     <Transition name="chip-text" mode="out-in">
                       <span v-if="copiedKeys.has(pm.fontName!)" key="copied" class="text-mint-600 font-medium">
-                        {{ locale.startsWith('zh') ? '已复制' : 'Copied!' }}
+                        {{ t('copiedLabel') }}
                       </span>
                       <span v-else key="name">{{ pm.fontName }}</span>
                     </Transition>
