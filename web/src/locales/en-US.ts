@@ -387,4 +387,18 @@ export default {
 
   // ─── Navigation ─────────────────────────────────────────────────────────────
   navLogs: "Logs",
+
+  // ─── Public Upload ──────────────────────────────────────────────────────────
+  publicUpload: "Upload Fonts",
+  publicUploadTitle: "Upload Fonts to Library",
+  publicUploadDesc: "Upload font files to the public font library. Uploaded fonts will be available to all users.",
+  publicUploadDropTitle: "Drop font files here",
+  publicUploadDropHint: "Supports .ttf / .otf / .ttc / .otc, max 30 MB, bulk upload supported",
+  publicUploadNoFont: "No valid font files detected",
+  publicUploadStart: "Start Upload",
+  publicUploadUploading: "Uploading…",
+  publicUploadValidating: "Validating…",
+  publicUploadSuccess: "{n} font(s) uploaded successfully",
+  publicUploadPartial: "{ok} succeeded, {fail} failed",
+  publicUploadSecurityNote: "All uploads are strictly validated: extension check, file signature verification, and structural parsing to ensure only genuine font files are accepted.",
 }

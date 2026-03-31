@@ -30,6 +30,9 @@ export interface Config {
   pendingDir: string;
   // Scheduler
   autoIndexIntervalHours: number;
+  // Public upload
+  uploadMaxFileSize: number;
+  uploadTargetDir: string;
 }
 
 function resolve(path: string): string {
@@ -60,6 +63,9 @@ export const config: Config = {
   pendingDir:         resolve(process.env.PENDING_DIR ?? "./data/pending"),
   // Scheduler
   autoIndexIntervalHours: parseInt(process.env.AUTO_INDEX_INTERVAL_HOURS ?? "4", 10),
+  // Public upload
+  uploadMaxFileSize: parseInt(process.env.UPLOAD_MAX_FILE_SIZE ?? String(30 * 1024 * 1024), 10),
+  uploadTargetDir: (process.env.UPLOAD_TARGET_DIR ?? "CatCat-Fonts/").replace(/\/?$/, "/"),
 };
 
 // Ensure log directory exists

@@ -387,4 +387,18 @@ export default {
 
   // ─── Navigation ─────────────────────────────────────────────────────────────
   navLogs: "处理记录",
+
+  // ─── Public Upload ──────────────────────────────────────────────────────────
+  publicUpload: "上传字体",
+  publicUploadTitle: "上传字体到字体库",
+  publicUploadDesc: "上传字体文件到公共字体库，上传后可供所有用户使用。",
+  publicUploadDropTitle: "拖拽字体文件到此处",
+  publicUploadDropHint: "支持 .ttf / .otf / .ttc / .otc，最大 30 MB，可批量上传",
+  publicUploadNoFont: "未检测到有效字体文件",
+  publicUploadStart: "开始上传",
+  publicUploadUploading: "上传中…",
+  publicUploadValidating: "验证中…",
+  publicUploadSuccess: "{n} 个字体上传成功",
+  publicUploadPartial: "{ok} 个成功，{fail} 个失败",
+  publicUploadSecurityNote: "所有上传文件经过严格验证：扩展名检查、文件签名校验、结构解析，确保仅接受合法字体文件。",
 }

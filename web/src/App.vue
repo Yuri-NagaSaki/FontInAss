@@ -25,13 +25,14 @@ const prefetchRoute = (path: string) => {
   });
 };
 const navItems = [
-  { path: "/",         labelKey: "home"     },
-  { path: "/subset",   labelKey: "subset"   },
-  { path: "/sharing",  labelKey: "sharing"  },
-  { path: "/logs",     labelKey: "navLogs"  },
-  { path: "/cli",      labelKey: "cli"      },
-  { path: "/comments", labelKey: "comments" },
-  { path: "/about",    labelKey: "about"    },
+  { path: "/",         labelKey: "home"         },
+  { path: "/subset",   labelKey: "subset"       },
+  { path: "/upload",   labelKey: "publicUpload" },
+  { path: "/sharing",  labelKey: "sharing"      },
+  { path: "/logs",     labelKey: "navLogs"      },
+  { path: "/cli",      labelKey: "cli"          },
+  { path: "/comments", labelKey: "comments"     },
+  { path: "/about",    labelKey: "about"        },
 ];
 
 const isNavActive = (path: string) => {

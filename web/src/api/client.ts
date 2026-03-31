@@ -158,6 +158,40 @@ export async function uploadFonts(
   return results;
 }
 
+/**
+ * Public font upload — no API key required.
+ * Calls POST /api/upload with strict server-side validation.
+ */
+export async function uploadFontsPublic(
+  files: File[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<UploadResult[]> {
+  const results: UploadResult[] = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const form = new FormData();
+    form.append("file", f);
+    try {
+      const res = await fetch(`${BASE}/api/upload`, {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+        const errMsg = (body.error as string) || `Upload failed (HTTP ${res.status})`;
+        results.push({ filename: f.name, id: "", faces: 0, error: errMsg });
+      } else {
+        const json = await res.json() as { results: UploadResult[] };
+        results.push(...(json.results ?? []));
+      }
+    } catch (e) {
+      results.push({ filename: f.name, id: "", faces: 0, error: String(e) });
+    }
+    onProgress?.(i + 1, files.length);
+  }
+  return results;
+}
+
 export async function deleteFont(id: string): Promise<void> {
   const res = await fetch(`${BASE}/api/fonts/${id}`, {
     method: "DELETE",

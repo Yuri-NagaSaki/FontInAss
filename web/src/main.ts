@@ -22,6 +22,7 @@ const router = createRouter({
   routes: [
     { path: "/", component: () => import("./views/HomeView.vue") },
     { path: "/subset", component: () => import("./views/SubsetView.vue") },
+    { path: "/upload", component: () => import("./views/UploadView.vue") },
     { path: "/fonts", component: () => import("./views/FontsView.vue") },
     { path: "/sharing", component: () => import("./views/SharingView.vue") },
     { path: "/cli", component: () => import("./views/CliView.vue") },

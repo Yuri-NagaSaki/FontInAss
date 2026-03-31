@@ -16,6 +16,7 @@ import fontsRoute from "./routes/fonts.js";
 import subsetRoute from "./routes/subset.js";
 import sharingRoute from "./routes/sharing.js";
 import logsRoute from "./routes/logs.js";
+import uploadRoute from "./routes/upload.js";
 import { startScheduler } from "./lib/scheduler.js";
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ app.use("*", compress());
 app.route("/api/fonts", fontsRoute);
 app.route("/api/subset", subsetRoute);
 app.route("/api/sharing", sharingRoute);
+app.route("/api/upload", uploadRoute);
 app.route("/api/logs", logsRoute);
 
 // Health check — requires API key when configured
