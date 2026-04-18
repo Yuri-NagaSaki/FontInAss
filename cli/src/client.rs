@@ -31,7 +31,8 @@ struct BatchItem {
     filename: String,
     code: u16,
     messages: Option<Vec<String>>,
-    data: Option<Vec<u8>>,
+    /// Base64-encoded file data returned by the server for batch requests.
+    data: Option<String>,
 }
 
 /// Decode the X-Message header: base64 → bytes → UTF-8 → JSON string array.
@@ -170,7 +171,7 @@ pub async fn subset_batch(
             filename: item.filename,
             code: item.code,
             messages: item.messages.unwrap_or_default(),
-            data: item.data,
+            data: item.data.and_then(|s| B64.decode(s).ok()),
         })
         .collect())
 }
