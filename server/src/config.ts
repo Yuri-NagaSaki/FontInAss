@@ -33,6 +33,8 @@ export interface Config {
   autoIndexIntervalHours: number;
   // Public upload
   uploadTargetDir: string;
+  // Archive validation
+  archiveMaxUncompressed: number;
 }
 
 function resolve(path: string): string {
@@ -65,6 +67,8 @@ export const config: Config = {
   autoIndexIntervalHours: parseInt(process.env.AUTO_INDEX_INTERVAL_HOURS ?? "4", 10),
   // Public upload
   uploadTargetDir: (process.env.UPLOAD_TARGET_DIR ?? "CatCat-Fonts/").replace(/\/?$/, "/"),
+  // Archive validation
+  archiveMaxUncompressed: parseInt(process.env.ARCHIVE_MAX_UNCOMPRESSED ?? String(2 * 1024 * 1024 * 1024), 10),
 };
 
 // Ensure log directory exists

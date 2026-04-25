@@ -5,7 +5,7 @@
  * 7z:   Listed via the `7z l` CLI command (p7zip-full installed in Docker).
  */
 
-import { log } from "../config.js";
+import { config, log } from "../config.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ export function archiveMimeType(type: ArchiveType): string {
 /** Extract filenames from a ZIP central directory (minimal in-process parser). */
 function extractZipFilenames(buf: Buffer): string[] {
   const names: string[] = [];
-  const MAX_UNCOMPRESSED = 500 * 1024 * 1024; // 500MB limit
+  const MAX_UNCOMPRESSED = config.archiveMaxUncompressed;
   const searchStart = Math.max(0, buf.length - 65536);
   let eocdOffset = -1;
   for (let i = buf.length - 22; i >= searchStart; i--) {

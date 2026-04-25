@@ -142,6 +142,10 @@ function selectAutoComplete(item: { name_cn: string; letter: string }) {
   showAutoComplete.value = false;
 }
 
+function closeAutoCompleteSoon() {
+  window.setTimeout(() => { showAutoComplete.value = false; }, 200);
+}
+
 // ─── Sub-group autocomplete ───────────────────────────────────────────────────
 
 const showSubGroupAC = ref(false);
@@ -160,6 +164,10 @@ const subGroupACResults = computed(() => {
 function selectSubGroup(name: string) {
   uploadForm.value.sub_group = name;
   showSubGroupAC.value = false;
+}
+
+function closeSubGroupAutoCompleteSoon() {
+  window.setTimeout(() => { showSubGroupAC.value = false; }, 200);
 }
 
 function handleClose() {
@@ -224,7 +232,7 @@ function handleClose() {
                 <input
                   v-model="uploadForm.name_cn"
                   @focus="showAutoComplete = true"
-                  @blur="window.setTimeout(() => showAutoComplete = false, 200)"
+                  @blur="closeAutoCompleteSoon"
                   autocomplete="off"
                   class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-all duration-150"
                   :placeholder="t('sharingAnimeNamePlaceholder')"
@@ -273,7 +281,7 @@ function handleClose() {
                 <input
                   v-model="uploadForm.sub_group"
                   @focus="showSubGroupAC = true"
-                  @blur="window.setTimeout(() => showSubGroupAC = false, 200)"
+                  @blur="closeSubGroupAutoCompleteSoon"
                   autocomplete="off"
                   class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-all duration-150"
                   :placeholder="t('sharingSubGroupPlaceholder')"

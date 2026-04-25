@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { debounce } from "lodash-es";
@@ -91,7 +91,7 @@ const animeFolders = computed(() => {
 });
 
 const seasonFolders = computed(() => {
-  if (navDepth.value < 2) return [];
+  if (navDepth.value < 2) return { seasons: [], subEntries: null as string[] | null };
   const [letter, animeName] = currentPath.value;
   const seasonMap = new Map<string, SharedArchive[]>();
   let subEntries: string[] | null = null;

@@ -18,6 +18,19 @@ export interface FontSubsetResult {
   error: string | null;
 }
 
+function toArrayBuffer(fontBytes: Uint8Array): ArrayBuffer {
+  return (fontBytes.byteOffset === 0 && fontBytes.byteLength === fontBytes.buffer.byteLength)
+    ? fontBytes.buffer as ArrayBuffer
+    : fontBytes.buffer.slice(fontBytes.byteOffset, fontBytes.byteOffset + fontBytes.byteLength) as ArrayBuffer;
+}
+
+export function parseFontFace(fontBytes: Uint8Array, faceIndex: number): opentype.Font {
+  const buf = toArrayBuffer(fontBytes);
+  return isTTC(fontBytes)
+    ? parseTTCFace(buf, faceIndex)
+    : opentype.parse(buf, { lowMemory: true });
+}
+
 /**
  * Subset a font to only include the given Unicode codepoints.
  */
@@ -30,14 +43,24 @@ export async function subsetFont(
   unicodes: Set<number>,
 ): Promise<FontSubsetResult> {
   try {
-    const buf = (fontBytes.byteOffset === 0 && fontBytes.byteLength === fontBytes.buffer.byteLength)
-      ? fontBytes.buffer as ArrayBuffer
-      : fontBytes.buffer.slice(fontBytes.byteOffset, fontBytes.byteOffset + fontBytes.byteLength) as ArrayBuffer;
+    return subsetParsedFont(parseFontFace(fontBytes, faceIndex), fontName, weight, italic, unicodes);
+  } catch (e) {
+    return {
+      encoded: "",
+      missingGlyphs: "",
+      error: `Subsetting error [${fontName}]: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+}
 
-    const orig: opentype.Font = isTTC(fontBytes)
-      ? parseTTCFace(buf, faceIndex)
-      : opentype.parse(buf, { lowMemory: true });
-
+export function subsetParsedFont(
+  orig: opentype.Font,
+  fontName: string,
+  weight: number,
+  italic: boolean,
+  unicodes: Set<number>,
+): FontSubsetResult {
+  try {
     // .notdef must always be the first glyph
     const origNotdef = orig.glyphs.get(0);
     const notdef = new opentype.Glyph({
@@ -54,14 +77,15 @@ export async function subsetFont(
     for (const cp of unicodes) {
       if (seen.has(cp)) continue;
       const char = String.fromCodePoint(cp);
-      const origGlyph = orig.charToGlyph(char);
+      const glyphIndex = orig.charToGlyphIndex(char);
+      const origGlyph = glyphIndex ? orig.glyphs.get(glyphIndex) : null;
 
-      if (!origGlyph || origGlyph.index === 0) {
+      if (!origGlyph || glyphIndex === 0) {
         missing.push(char);
         continue;
       }
 
-      const rendered = orig.getPath(char, 0, 0, orig.unitsPerEm);
+      const rendered = origGlyph.getPath(0, 0, orig.unitsPerEm, undefined, orig);
       const newPath = new opentype.Path();
 
       for (const cmd of rendered.commands) {

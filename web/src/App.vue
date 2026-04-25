@@ -9,6 +9,7 @@ import KInput from "./components/KInput.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
 import { getApiKey, setApiKey, clearApiKey } from "./api/client";
 import { useSettings } from "./composables/useSettings";
+import { preconnectWaline, preloadWalineAssets } from "./lib/waline-loader";
 
 const { t, locale } = useI18n();
 const router = useRouter();
@@ -25,6 +26,7 @@ const prefetchRoute = (path: string) => {
     const comp = m.components?.default;
     if (typeof comp === "function") (comp as () => Promise<unknown>)();
   });
+  if (path === "/comments") warmComments();
 };
 const navItems = [
   { path: "/",         labelKey: "home"         },
@@ -65,6 +67,11 @@ const cycleTheme = () => {
 };
 
 const darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+let commentsIdleHandle: number | null = null;
+
+const warmComments = () => {
+  void preloadWalineAssets().catch(() => undefined);
+};
 
 // ─── Keyboard shortcuts ──────────────────────────────────────────────────────
 const onEscape = (e: KeyboardEvent) => {
@@ -77,11 +84,27 @@ const onEscape = (e: KeyboardEvent) => {
 
 onMounted(() => {
   applyTheme();
+  preconnectWaline();
   darkModeQuery.addEventListener("change", applyTheme);
   window.addEventListener("keydown", onEscape);
+  const win = window as typeof window & {
+    requestIdleCallback?: (callback: () => void, options?: { timeout?: number }) => number;
+    cancelIdleCallback?: (handle: number) => void;
+  };
+  if (win.requestIdleCallback) {
+    commentsIdleHandle = win.requestIdleCallback(warmComments, { timeout: 2500 });
+  } else {
+    commentsIdleHandle = window.setTimeout(warmComments, 1200);
+  }
 });
 
 onUnmounted(() => {
+  const win = window as typeof window & { cancelIdleCallback?: (handle: number) => void };
+  if (commentsIdleHandle !== null) {
+    if (win.cancelIdleCallback) win.cancelIdleCallback(commentsIdleHandle);
+    else window.clearTimeout(commentsIdleHandle);
+    commentsIdleHandle = null;
+  }
   darkModeQuery.removeEventListener("change", applyTheme);
   window.removeEventListener("keydown", onEscape);
 });

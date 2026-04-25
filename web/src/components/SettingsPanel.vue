@@ -14,7 +14,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { settings, save, toggle, get } = useSettings();
+const { save, toggle, get } = useSettings();
 
 const savedAck = ref(false);
 

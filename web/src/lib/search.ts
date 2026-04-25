@@ -3,9 +3,9 @@
  * Uses CJK charset for proper Chinese/Japanese character segmentation.
  */
 
-import FlexSearch from "flexsearch";
+import FlexSearch, { type Document as FlexDocument, type EnrichedDocumentSearchResults } from "flexsearch";
 
-export interface SearchableArchive {
+export interface SearchableArchive extends Record<string, string> {
   id: string;
   name_cn: string;
   sub_group: string;
@@ -14,12 +14,12 @@ export interface SearchableArchive {
   letter: string;
 }
 
-let index: FlexSearch.Document<SearchableArchive, true> | null = null;
+let index: FlexDocument<SearchableArchive> | null = null;
 let allDocs: Map<string, SearchableArchive> = new Map();
 
 /** Build (or rebuild) the search index from archive data. */
 export function buildSearchIndex(archives: SearchableArchive[]): void {
-  index = new FlexSearch.Document<SearchableArchive, true>({
+  index = new FlexSearch.Document<SearchableArchive>({
     document: {
       id: "id",
       index: [
@@ -29,7 +29,7 @@ export function buildSearchIndex(archives: SearchableArchive[]): void {
       ],
       store: true,
     },
-    charset: "cjk" as any, // FlexSearch types don't include CJK charset
+    encoder: FlexSearch.Charset.CJK,
   });
 
   allDocs.clear();
@@ -43,13 +43,13 @@ export function buildSearchIndex(archives: SearchableArchive[]): void {
 export function searchArchives(query: string, limit = 50): string[] {
   if (!index || !query.trim()) return [];
 
-  const results = index.search(query, { limit, enrich: true });
+  const results = index.search(query, { limit, enrich: true }) as EnrichedDocumentSearchResults<SearchableArchive>;
   const seen = new Set<string>();
   const ids: string[] = [];
 
   for (const field of results) {
-    for (const item of (field as any).result) {
-      const id = typeof item === "object" ? item.id : String(item);
+    for (const item of field.result) {
+      const id = String(item.id);
       if (!seen.has(id)) {
         seen.add(id);
         ids.push(id);

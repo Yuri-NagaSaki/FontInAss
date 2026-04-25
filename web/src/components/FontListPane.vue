@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from "vue";
+import { ref, reactive, watch, onMounted, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
 import { Trash2, RefreshCcw, Search, CheckCircle2, Loader2 } from "lucide-vue-next";

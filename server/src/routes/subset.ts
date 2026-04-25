@@ -9,7 +9,7 @@ import {
   checkFontsSection,
 } from "../lib/ass-parser.js";
 import { lookupFontsBatch, loadFontBytes, type FontLookupResult } from "../lib/font-manager.js";
-import { subsetFont } from "../lib/subsetter.js";
+import { parseFontFace, subsetParsedFont } from "../lib/subsetter.js";
 import { computeCacheKey, getFromCache, setInCache } from "../cache.js";
 import { config, log } from "../config.js";
 import { createHash } from "node:crypto";
@@ -320,7 +320,8 @@ async function processSubtitle(
   // Group entries by font file (r2Key) so we load each file exactly once,
   // process all its variants, then release the bytes before loading the next.
   // This keeps peak memory to O(1 font file) instead of O(all fonts simultaneously).
-  const byFile = new Map<string, Array<{ key: string; unicodeSet: Set<number>; nameLower: string; weight: number; italic: boolean }>>();
+  type FontVariant = { key: string; unicodeSet: Set<number>; nameLower: string; weight: number; italic: boolean };
+  const byFile = new Map<string, FontVariant[]>();
   const missingEntries: Array<{ key: string; nameLower: string }> = [];
 
   for (const [key, unicodeSet] of fontEntries) {
@@ -362,14 +363,35 @@ async function processSubtitle(
       continue;
     }
 
-    await Promise.all(variants.map(async ({ key, unicodeSet, nameLower, weight, italic }) => {
-      const match = matchMap.get(key)!;
-      const tSub = Date.now();
-      const fontDisplayName = originalNames[nameLower] ?? nameLower;
-      const result = await subsetFont(fontBytes, match.fontIndex, fontDisplayName, weight, italic, unicodeSet);
-      log("debug", `[subset:${filename}]   subsetted "${displayName(nameLower)}" in ${Date.now()-tSub}ms → ${result.encoded.length} encoded chars${result.error ? ` ERROR: ${result.error}` : ""}${result.missingGlyphs ? ` MISSING: ${result.missingGlyphs}` : ""}`);
-      subsetResultMap.set(key, result);
-    }));
+    const byFace = new Map<number, FontVariant[]>();
+    for (const variant of variants) {
+      const match = matchMap.get(variant.key)!;
+      const faceVariants = byFace.get(match.fontIndex) ?? [];
+      faceVariants.push(variant);
+      byFace.set(match.fontIndex, faceVariants);
+    }
+
+    for (const [faceIndex, faceVariants] of byFace) {
+      const tParse = Date.now();
+      let parsedFont: ReturnType<typeof parseFontFace>;
+      try {
+        parsedFont = parseFontFace(fontBytes, faceIndex);
+        log("debug", `[subset:${filename}]   parsed ${resolvedKey} face=${faceIndex} in ${Date.now()-tParse}ms`);
+      } catch (e) {
+        const error = `Subsetting error [${resolvedKey}#${faceIndex}]: ${e instanceof Error ? e.message : String(e)}`;
+        log("warn", `[subset:${filename}]   ${error}`);
+        for (const { key } of faceVariants) subsetResultMap.set(key, { encoded: "", missingGlyphs: "", error });
+        continue;
+      }
+
+      for (const { key, unicodeSet, nameLower, weight, italic } of faceVariants) {
+        const tSub = Date.now();
+        const fontDisplayName = originalNames[nameLower] ?? nameLower;
+        const result = subsetParsedFont(parsedFont, fontDisplayName, weight, italic, unicodeSet);
+        log("debug", `[subset:${filename}]   subsetted "${displayName(nameLower)}" in ${Date.now()-tSub}ms → ${result.encoded.length} encoded chars${result.error ? ` ERROR: ${result.error}` : ""}${result.missingGlyphs ? ` MISSING: ${result.missingGlyphs}` : ""}`);
+        subsetResultMap.set(key, result);
+      }
+    }
     // fontBytes goes out of scope here — eligible for GC before next file loads
   }
 
@@ -384,7 +406,10 @@ async function processSubtitle(
       errors.push(res.error);
     } else {
       fontsSection += res.encoded;
-      if (res.missingGlyphs) errors.push(`Missing glyphs: ${res.missingGlyphs}`);
+      if (res.missingGlyphs) {
+        const [nameLower] = key.split("|");
+        errors.push(`Missing glyphs in [${displayName(nameLower)}]: ${res.missingGlyphs}`);
+      }
     }
   }
 

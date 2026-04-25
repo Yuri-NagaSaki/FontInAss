@@ -2,7 +2,7 @@
 import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { FolderOpen, RefreshCcw, KeyRound, AlertTriangle, Database } from "lucide-vue-next";
+import { RefreshCcw, KeyRound, AlertTriangle, Database } from "lucide-vue-next";
 import { browseR2, indexR2Keys, listR2Keys } from "../api/client";
 import type { BrowseFile } from "../api/client";
 import KButton from "./KButton.vue";

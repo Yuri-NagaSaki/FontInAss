@@ -228,14 +228,19 @@ const toggleMessages = (key: string) => {
 interface ParsedMessage {
   type: 'missing-font' | 'missing-glyphs' | 'other';
   fontName?: string;
+  glyphs?: string;
   raw: string;
 }
 
 const parseMessage = (msg: string): ParsedMessage => {
   const fontMatch = msg.match(/^Missing font:\s*\[(.+)\]$/);
   if (fontMatch) return { type: 'missing-font', fontName: fontMatch[1], raw: msg };
+  const glyphFontMatch = msg.match(/^Missing glyphs in \[(.+)\]:\s*(.+)$/);
+  if (glyphFontMatch) {
+    return { type: 'missing-glyphs', fontName: glyphFontMatch[1], glyphs: glyphFontMatch[2], raw: msg };
+  }
   const glyphMatch = msg.match(/^Missing glyphs:\s*(.+)$/);
-  if (glyphMatch) return { type: 'missing-glyphs', raw: msg };
+  if (glyphMatch) return { type: 'missing-glyphs', glyphs: glyphMatch[1], raw: msg };
   return { type: 'other', raw: msg };
 };
 
