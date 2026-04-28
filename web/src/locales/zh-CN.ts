@@ -456,7 +456,7 @@ export default {
   publicUploadValidating: "验证中…",
   publicUploadSuccess: "{n} 个字体上传成功",
   publicUploadPartial: "{ok} 个成功，{fail} 个失败",
-  publicUploadSecurityNote: "所有上传文件经过严格验证：扩展名检查、文件签名校验、结构解析，确保仅接受合法字体文件。",
+  publicUploadSecurityNote: "所有上传文件经过严格验证：扩展名检查、文件签名校验、结构解析，仅接受字体文件。",
 
   // ─── Theme ──────────────────────────────────────────────────────────────────
   themeSystem: "跟随系统",
