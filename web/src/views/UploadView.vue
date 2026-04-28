@@ -210,7 +210,7 @@ onBeforeUnmount(() => {
 
           <button
             v-if="entry.status !== 'uploading'"
-            class="w-5 h-5 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-ink-200/60 transition-all"
+            class="w-5 h-5 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-ink-200/60 transition"
             @click.stop="removeEntry(i)"
           >
             <X class="w-3 h-3 text-ink-400" />

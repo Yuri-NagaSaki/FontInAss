@@ -1,9 +1,10 @@
 /**
  * FlexSearch-based client-side search engine for subtitle archives.
- * Uses CJK charset for proper Chinese/Japanese character segmentation.
+ * FlexSearch is dynamically imported on first use to avoid loading ~60KB
+ * for users who never search.
  */
 
-import FlexSearch, { type Document as FlexDocument, type EnrichedDocumentSearchResults } from "flexsearch";
+import type { Document as FlexDocument, EnrichedDocumentSearchResults } from "flexsearch";
 
 export interface SearchableArchive extends Record<string, string> {
   id: string;
@@ -15,33 +16,56 @@ export interface SearchableArchive extends Record<string, string> {
 }
 
 let index: FlexDocument<SearchableArchive> | null = null;
-let allDocs: Map<string, SearchableArchive> = new Map();
+let pendingDocs: SearchableArchive[] | null = null;
+let buildPromise: Promise<void> | null = null;
 
-/** Build (or rebuild) the search index from archive data. */
+async function ensureIndex(): Promise<void> {
+  if (index || !pendingDocs) return;
+  if (buildPromise) return buildPromise;
+
+  buildPromise = (async () => {
+    const FlexSearch = (await import("flexsearch")).default;
+    const docs = pendingDocs!;
+    pendingDocs = null;
+    const idx = new FlexSearch.Document<SearchableArchive>({
+      document: {
+        id: "id",
+        index: [
+          { field: "name_cn", tokenize: "forward", resolution: 9 },
+          { field: "sub_group", tokenize: "full" },
+          { field: "languages", tokenize: "strict" },
+        ],
+        store: true,
+      },
+      encoder: FlexSearch.Charset.CJK,
+    });
+    for (const a of docs) idx.add(a);
+    index = idx;
+  })();
+
+  return buildPromise;
+}
+
+/** Queue archives to be indexed lazily on first search. */
 export function buildSearchIndex(archives: SearchableArchive[]): void {
-  index = new FlexSearch.Document<SearchableArchive>({
-    document: {
-      id: "id",
-      index: [
-        { field: "name_cn", tokenize: "forward", resolution: 9 },
-        { field: "sub_group", tokenize: "full" },
-        { field: "languages", tokenize: "strict" },
-      ],
-      store: true,
-    },
-    encoder: FlexSearch.Charset.CJK,
-  });
+  index = null;
+  buildPromise = null;
+  pendingDocs = archives;
 
-  allDocs.clear();
-  for (const a of archives) {
-    index.add(a);
-    allDocs.set(a.id, a);
+  // Warm the index during browser idle time so the first search feels instant.
+  const warm = () => { void ensureIndex(); };
+  if (typeof requestIdleCallback === "function") {
+    requestIdleCallback(warm, { timeout: 2000 });
+  } else {
+    setTimeout(warm, 800);
   }
 }
 
 /** Search archives by query string. Returns matched archive IDs. */
-export function searchArchives(query: string, limit = 50): string[] {
-  if (!index || !query.trim()) return [];
+export async function searchArchives(query: string, limit = 50): Promise<string[]> {
+  if (!query.trim()) return [];
+  await ensureIndex();
+  if (!index) return [];
 
   const results = index.search(query, { limit, enrich: true }) as EnrichedDocumentSearchResults<SearchableArchive>;
   const seen = new Set<string>();
@@ -63,5 +87,6 @@ export function searchArchives(query: string, limit = 50): string[] {
 /** Clear the search index. */
 export function clearSearchIndex(): void {
   index = null;
-  allDocs.clear();
+  pendingDocs = null;
+  buildPromise = null;
 }

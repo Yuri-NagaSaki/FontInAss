@@ -88,7 +88,7 @@ const handleFontChanged = () => {
               v-model="lockKeyInput"
               type="password"
               :placeholder="t('apiKeyPlaceholder')"
-              class="w-full h-11 rounded-xl border border-ink-200 bg-surface px-4 pr-10 font-mono text-sm text-ink-900 placeholder:text-ink-300 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-all duration-150"
+              class="w-full h-11 rounded-xl border border-ink-200 bg-surface px-4 pr-10 font-mono text-sm text-ink-900 placeholder:text-ink-300 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-colors duration-150"
               @keyup.enter="unlockWithKey"
             />
             <KeyRound class="pointer-events-none absolute right-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-300" />
@@ -121,7 +121,7 @@ const handleFontChanged = () => {
           { id: 'sharing', icon: Share2,        label: t('sharingFontsTab') },
         ]"
         :key="tab.id"
-        class="flex items-center gap-1.5 h-8 px-4 rounded-xl text-sm font-medium transition-all duration-150"
+        class="flex items-center gap-1.5 h-8 px-4 rounded-xl text-sm font-medium transition-colors duration-150"
         :class="activeTab === tab.id ? 'bg-surface shadow-sm text-ink-900' : 'text-ink-500 hover:text-ink-700'"
         @click="activeTab = tab.id as Tab"
       >

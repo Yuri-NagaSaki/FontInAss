@@ -61,7 +61,7 @@ const prog = () => props.indexProgress?.[props.node.prefix];
         <span v-if="node.indexed" class="text-[11px] text-mint-600 bg-mint-100 px-1.5 py-0.5 rounded-md shrink-0 font-medium">✓</span>
         <button
           v-if="!node.indexed"
-          class="opacity-0 group-hover:opacity-100 text-[11px] text-sky-500 hover:text-sky-700 shrink-0 px-2 py-0.5 rounded-md hover:bg-sky-50 transition-all"
+          class="opacity-0 group-hover:opacity-100 text-[11px] text-sky-500 hover:text-sky-700 shrink-0 px-2 py-0.5 rounded-md hover:bg-sky-50 transition"
           @click.stop="emit('index-file', node)"
         >Index</button>
       </template>
@@ -70,7 +70,7 @@ const prog = () => props.indexProgress?.[props.node.prefix];
       <template v-if="node.type === 'folder'">
         <button
           v-if="!prog()?.active"
-          class="opacity-0 group-hover:opacity-100 flex items-center gap-1 text-[11px] text-sakura-500 hover:text-sakura-700 shrink-0 px-2 py-0.5 rounded-md hover:bg-sakura-50 transition-all"
+          class="opacity-0 group-hover:opacity-100 flex items-center gap-1 text-[11px] text-sakura-500 hover:text-sakura-700 shrink-0 px-2 py-0.5 rounded-md hover:bg-sakura-50 transition"
           @click.stop="emit('index-all', node.prefix)"
         >
           <Layers class="w-3 h-3" /> Index All

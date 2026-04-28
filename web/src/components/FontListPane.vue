@@ -5,6 +5,7 @@ import { toast } from "vue-sonner";
 import { Trash2, RefreshCcw, Search, CheckCircle2, Loader2 } from "lucide-vue-next";
 import { listFonts, deleteFont, deleteFontsBatch } from "../api/client";
 import type { FontItem } from "../api/client";
+import { useConfirm } from "../composables/useConfirm";
 import KButton from "./KButton.vue";
 import KBadge from "./KBadge.vue";
 import KEmpty from "./KEmpty.vue";
@@ -85,6 +86,14 @@ const toggleSelect = (id: string) => {
 const deleteSelected = async () => {
   if (selectedIds.size === 0) return;
   const ids = [...selectedIds];
+  const { confirm } = useConfirm();
+  const ok = await confirm({
+    title: t("deleteFontsTitle"),
+    message: t("deleteFontsConfirm", { n: ids.length }),
+    variant: "danger",
+    confirmText: t("delete"),
+  });
+  if (!ok) return;
   try {
     await deleteFontsBatch(ids);
     showDeleteNotice(`×${ids.length} ${t("deleted")}`);
@@ -131,7 +140,7 @@ onBeforeUnmount(() => {
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400 pointer-events-none" />
         <input
           v-model="fontSearch"
-          class="w-full h-9 pl-9 pr-3 rounded-xl border border-ink-200 text-sm text-ink-700 placeholder:text-ink-400 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-all bg-surface"
+          class="w-full h-9 pl-9 pr-3 rounded-xl border border-ink-200 text-sm text-ink-700 placeholder:text-ink-400 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-colors bg-surface"
           :placeholder="t('searchFonts')"
         />
       </div>
@@ -164,7 +173,7 @@ onBeforeUnmount(() => {
           @click="toggleSelect(font.id)"
         >
           <div
-            class="w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-all"
+            class="w-5 h-5 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors"
             :class="selectedIds.has(font.id)
               ? 'bg-sakura-400 border-sakura-400'
               : 'border-ink-200 hover:border-sakura-300'"

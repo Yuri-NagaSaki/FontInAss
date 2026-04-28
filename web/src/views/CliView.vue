@@ -150,7 +150,7 @@ const codeExamples = [
           v-for="p in platforms"
           :key="p.key"
           @click="selectedPlatform = p.key"
-          class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all duration-150"
+          class="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors duration-150"
           :class="
             selectedPlatform === p.key
               ? 'bg-emerald-500 text-white shadow-[var(--shadow-sm)]'

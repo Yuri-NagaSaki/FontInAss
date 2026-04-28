@@ -166,7 +166,7 @@ function toggleExpand(id: string) {
         <div class="relative flex-1 min-w-[180px]">
           <Search class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-300" />
           <input v-model="search" :placeholder="t('logsSearch')"
-            class="w-full h-9 rounded-xl border border-ink-200 bg-surface pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-all" />
+            class="w-full h-9 rounded-xl border border-ink-200 bg-surface pl-9 pr-3 text-sm text-ink-700 placeholder:text-ink-300 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-colors" />
         </div>
         <div class="flex gap-1">
           <KButton v-for="cf in codeFilters" :key="cf.label" size="sm"
@@ -259,7 +259,7 @@ function toggleExpand(id: string) {
             v-if="hasKey"
             @click="toggleResolve(mf)"
             :disabled="resolvingFont === mf.font_name"
-            class="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center transition-all"
+            class="shrink-0 w-6 h-6 rounded-lg flex items-center justify-center transition-colors"
             :class="mf.resolved
               ? 'bg-mint-100 text-mint-600 hover:bg-amber-100 hover:text-amber-600'
               : 'opacity-0 group-hover:opacity-100 bg-ink-100 text-ink-400 hover:bg-mint-100 hover:text-mint-600'"

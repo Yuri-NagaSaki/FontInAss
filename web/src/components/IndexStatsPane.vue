@@ -125,7 +125,7 @@ onMounted(() => {
           <!-- progress bar relative to total -->
           <div class="w-16 bg-ink-100 rounded-full h-1.5 shrink-0">
             <div
-              class="bg-sakura-400 h-1.5 rounded-full transition-all duration-500"
+              class="bg-sakura-400 h-1.5 rounded-full transition-[width] duration-500"
               :style="{ width: fontStats!.total > 0 ? `${(folder.count / fontStats!.total * 100).toFixed(1)}%` : '0%' }"
             />
           </div>

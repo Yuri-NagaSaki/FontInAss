@@ -2,9 +2,9 @@
 import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { toast } from "vue-sonner";
-import { debounce } from "lodash-es";
+import { useDebounceFn } from "@vueuse/core";
 import {
-  Share2, Search, X, Tv,
+  Search, X, Tv,
   Paperclip, FolderOpen, ChevronRight, Home,
   CloudUpload,
 } from "lucide-vue-next";
@@ -16,6 +16,7 @@ import ArchiveCard from "../components/ArchiveCard.vue";
 import ArchivePreviewModal from "../components/ArchivePreviewModal.vue";
 import ArchiveEditModal from "../components/ArchiveEditModal.vue";
 import ContributeForm from "../components/ContributeForm.vue";
+import { useConfirm } from "../composables/useConfirm";
 import type { SharedArchive } from "../api/client";
 import {
   listSharedArchives,
@@ -53,71 +54,89 @@ const stats = computed(() => {
 });
 
 // ─── Grouped data structures ──────────────────────────────────────────────────
+// All folder views derive from a single O(n) pass over filtered archives,
+// so a search input change re-iterates the list once total instead of 5 times.
 
 const filteredArchives = computed(() => {
-  let list = archives.value;
-  if (isSearching.value) {
-    list = list.filter((a) => searchResultIds.value.has(a.id));
+  if (!isSearching.value) return archives.value;
+  const ids = searchResultIds.value;
+  return archives.value.filter((a) => ids.has(a.id));
+});
+
+interface AnimeGroup {
+  archives: SharedArchive[];
+  seasons: Map<string, SharedArchive[]>;
+  subEntries: string[] | null;
+}
+
+const grouped = computed(() => {
+  // letter -> animeName -> { archives, seasons, subEntries }
+  const tree = new Map<string, Map<string, AnimeGroup>>();
+  for (const a of filteredArchives.value) {
+    let byAnime = tree.get(a.letter);
+    if (!byAnime) { byAnime = new Map(); tree.set(a.letter, byAnime); }
+    let g = byAnime.get(a.name_cn);
+    if (!g) { g = { archives: [], seasons: new Map(), subEntries: null }; byAnime.set(a.name_cn, g); }
+    g.archives.push(a);
+    let seasonList = g.seasons.get(a.season);
+    if (!seasonList) { seasonList = []; g.seasons.set(a.season, seasonList); }
+    seasonList.push(a);
+    if (!g.subEntries && a.sub_entries) {
+      try { g.subEntries = JSON.parse(a.sub_entries); } catch { /* ignore */ }
+    }
   }
-  return list;
+  return tree;
 });
 
 const letterFolders = computed(() => {
-  const map = new Map<string, Set<string>>();
-  for (const a of filteredArchives.value) {
-    if (!map.has(a.letter)) map.set(a.letter, new Set());
-    map.get(a.letter)!.add(a.name_cn);
-  }
-  return [...map.entries()]
+  return [...grouped.value.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([letter, animeSet]) => ({ letter, count: animeSet.size }));
+    .map(([letter, byAnime]) => ({ letter, count: byAnime.size }));
 });
 
 const animeFolders = computed(() => {
   if (navDepth.value < 1) return [];
-  const letter = currentPath.value[0];
-  const animeMap = new Map<string, SharedArchive[]>();
-  for (const a of filteredArchives.value) {
-    if (a.letter !== letter) continue;
-    if (!animeMap.has(a.name_cn)) animeMap.set(a.name_cn, []);
-    animeMap.get(a.name_cn)!.push(a);
-  }
-  return [...animeMap.entries()]
+  const byAnime = grouped.value.get(currentPath.value[0]);
+  if (!byAnime) return [];
+  return [...byAnime.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, list]) => {
-      const seasons = new Set(list.map(a => a.season));
-      return { name, seasonCount: seasons.size, archiveCount: list.length };
-    });
+    .map(([name, g]) => ({
+      name,
+      seasonCount: g.seasons.size,
+      archiveCount: g.archives.length,
+    }));
 });
 
 const seasonFolders = computed(() => {
   if (navDepth.value < 2) return { seasons: [], subEntries: null as string[] | null };
   const [letter, animeName] = currentPath.value;
-  const seasonMap = new Map<string, SharedArchive[]>();
-  let subEntries: string[] | null = null;
-  for (const a of filteredArchives.value) {
-    if (a.letter !== letter || a.name_cn !== animeName) continue;
-    if (!seasonMap.has(a.season)) seasonMap.set(a.season, []);
-    seasonMap.get(a.season)!.push(a);
-    if (!subEntries && a.sub_entries) {
-      try { subEntries = JSON.parse(a.sub_entries); } catch {}
-    }
-  }
+  const g = grouped.value.get(letter)?.get(animeName);
+  if (!g) return { seasons: [], subEntries: null };
   return {
-    seasons: [...seasonMap.entries()]
+    seasons: [...g.seasons.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, archives]) => ({ name, archiveCount: archives.length })),
-    subEntries,
+      .map(([name, list]) => ({ name, archiveCount: list.length })),
+    subEntries: g.subEntries,
   };
 });
 
 const seasonArchives = computed(() => {
   if (navDepth.value < 3) return [];
   const [letter, animeName, season] = currentPath.value;
-  return filteredArchives.value.filter(
-    a => a.letter === letter && a.name_cn === animeName && a.season === season
-  );
+  return grouped.value.get(letter)?.get(animeName)?.seasons.get(season) ?? [];
 });
+
+// ─── Pagination (avoid rendering 1000+ DOM nodes at once) ─────────────────────
+
+const PAGE_SIZE = 60;
+const animeVisible = ref(PAGE_SIZE);
+const searchVisible = ref(PAGE_SIZE);
+
+const animeFoldersPaged = computed(() => animeFolders.value.slice(0, animeVisible.value));
+const searchResultsPaged = computed(() => filteredArchives.value.slice(0, searchVisible.value));
+
+function showMoreAnime() { animeVisible.value += PAGE_SIZE; }
+function showMoreSearch() { searchVisible.value += PAGE_SIZE; }
 
 // ─── Navigation ───────────────────────────────────────────────────────────────
 
@@ -127,6 +146,7 @@ function navigateTo(depth: number, segment?: string) {
   } else {
     currentPath.value = currentPath.value.slice(0, depth);
   }
+  animeVisible.value = PAGE_SIZE;
 }
 
 function goRoot() {
@@ -135,13 +155,17 @@ function goRoot() {
 
 // ─── Search ───────────────────────────────────────────────────────────────────
 
-const onSearchDebounced = debounce(() => {
-  if (!searchQuery.value.trim()) {
+const onSearchDebounced = useDebounceFn(async () => {
+  const q = searchQuery.value.trim();
+  if (!q) {
     searchResultIds.value = new Set();
     return;
   }
-  const ids = searchArchives(searchQuery.value.trim());
+  const captured = q;
+  const ids = await searchArchives(captured);
+  if (captured !== searchQuery.value.trim()) return;
   searchResultIds.value = new Set(ids);
+  searchVisible.value = PAGE_SIZE;
 }, 200);
 
 function clearSearch() {
@@ -222,7 +246,15 @@ async function downloadFile(archive: SharedArchive) {
 // ─── Admin: Delete ────────────────────────────────────────────────────────────
 
 async function confirmDelete(archive: SharedArchive) {
-  if (!confirm(t("sharingDeleteConfirm"))) return;
+  const { confirm } = useConfirm();
+  const ok = await confirm({
+    title: t("sharingDeleteConfirmTitle"),
+    message: t("sharingDeleteConfirm"),
+    detail: `${archive.name_cn} · ${archive.season} · ${archive.sub_group}`,
+    variant: "danger",
+    confirmText: t("delete"),
+  });
+  if (!ok) return;
   try {
     await deleteArchive(archive.id);
     toast.success(t("sharingDeleteSuccess"));
@@ -240,25 +272,22 @@ onMounted(() => {
 <template>
   <div class="flex flex-col gap-6 animate-fade-in">
 
-    <!-- ═══ Header: Stats + Search (hidden during contribute) ═══ -->
-    <section v-if="!showContributeView" class="card p-6 bg-gradient-to-br from-white to-sakura-50/40">
-      <div class="flex items-start justify-between gap-4 mb-4 flex-wrap">
-        <div class="flex items-center gap-3">
-          <div class="w-11 h-11 rounded-xl bg-sakura-100 flex items-center justify-center shrink-0">
-            <Share2 class="w-5 h-5 text-sakura-500" />
-          </div>
-          <div>
-            <h1 class="font-display font-bold text-2xl text-ink-950">
+    <!-- ═══ Header: Title + Search (hidden during contribute) ═══ -->
+    <section v-if="!showContributeView" class="flex flex-col gap-4">
+      <div class="flex items-end justify-between gap-4 flex-wrap">
+        <div class="min-w-0">
+          <div class="flex items-baseline gap-2 flex-wrap">
+            <h1 class="font-display font-bold text-2xl md:text-[26px] text-ink-900 leading-tight tracking-tight">
               {{ t('sharingTitle') }}
             </h1>
-            <p class="text-sm text-ink-400" v-if="!loading">
-              {{ stats.animeCount }} {{ t('sharingAnimeCount') }} ·
-              {{ stats.archiveCount }} {{ t('sharingArchiveCount') }} ·
-              {{ stats.subGroupCount }} {{ t('sharingGroupCount') }}
-            </p>
+            <span v-if="!loading" class="text-xs text-ink-400 tabular-nums">
+              {{ stats.animeCount }} {{ t('sharingAnimeCount') }}
+              · {{ stats.archiveCount }} {{ t('sharingArchiveCount') }}
+              · {{ stats.subGroupCount }} {{ t('sharingGroupCount') }}
+            </span>
           </div>
         </div>
-        <KButton variant="primary" @click="openContributeView" class="shrink-0">
+        <KButton variant="primary" size="sm" @click="openContributeView" class="shrink-0">
           <CloudUpload class="w-4 h-4" />
           {{ t('sharingContributeButton') }}
         </KButton>
@@ -266,15 +295,15 @@ onMounted(() => {
 
       <!-- Search -->
       <div class="relative">
-        <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-300" />
+        <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-300 pointer-events-none" />
         <input
           v-model="searchQuery"
           @input="onSearchDebounced"
-          class="w-full pl-10 pr-10 py-2.5 rounded-xl border border-sakura-200 bg-surface text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:ring-2 focus:ring-sakura-300/50"
+          class="w-full pl-9 pr-9 py-2.5 rounded-xl border border-ink-200 bg-surface text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-sakura-300 focus:ring-2 focus:ring-sakura-200/50 transition-colors duration-150"
           :placeholder="t('sharingSearchPlaceholder')"
         />
-        <button v-if="searchQuery" @click="clearSearch" class="absolute right-3 top-1/2 -translate-y-1/2">
-          <X class="w-4 h-4 text-ink-300 hover:text-ink-500" />
+        <button v-if="searchQuery" @click="clearSearch" class="absolute right-3 top-1/2 -translate-y-1/2 text-ink-300 hover:text-ink-500 transition-colors">
+          <X class="w-4 h-4" />
         </button>
       </div>
     </section>
@@ -325,10 +354,10 @@ onMounted(() => {
         v-for="item in letterFolders"
         :key="item.letter"
         @click="navigateTo(0, item.letter)"
-        class="card p-5 flex flex-col items-center gap-3 hover:shadow-md hover:border-sakura-200 transition-all duration-200 cursor-pointer group active:scale-[0.97]"
+        class="card p-5 flex flex-col items-center gap-3 hover:shadow-md hover:border-sakura-200 transition-colors duration-150 cursor-pointer group"
       >
-        <div class="w-12 h-12 rounded-2xl bg-sakura-50 group-hover:bg-sakura-100 flex items-center justify-center transition-colors duration-200">
-          <FolderOpen class="w-6 h-6 text-sakura-400 group-hover:text-sakura-500 transition-colors duration-200" />
+        <div class="w-12 h-12 rounded-2xl bg-sakura-50 group-hover:bg-sakura-100 flex items-center justify-center transition-colors duration-150">
+          <FolderOpen class="w-6 h-6 text-sakura-400 group-hover:text-sakura-500 transition-colors duration-150" />
         </div>
         <span class="font-display font-bold text-2xl text-ink-800">{{ item.letter }}</span>
         <KBadge variant="default">{{ t('sharingLetterFolder', { count: item.count }) }}</KBadge>
@@ -341,13 +370,13 @@ onMounted(() => {
       class="flex flex-col gap-3"
     >
       <button
-        v-for="item in animeFolders"
+        v-for="item in animeFoldersPaged"
         :key="item.name"
         @click="navigateTo(1, item.name)"
-        class="card px-5 py-4 flex items-center gap-4 hover:shadow-md hover:border-sakura-200 transition-all duration-200 cursor-pointer group active:scale-[0.99] text-left"
+        class="card px-5 py-4 flex items-center gap-4 hover:shadow-md hover:border-sakura-200 transition-colors duration-150 cursor-pointer group text-left"
       >
-        <div class="w-10 h-10 rounded-xl bg-sky-50 group-hover:bg-sky-100 flex items-center justify-center shrink-0 transition-colors duration-200">
-          <Tv class="w-5 h-5 text-sky-400 group-hover:text-sky-500 transition-colors duration-200" />
+        <div class="w-10 h-10 rounded-xl bg-sky-50 group-hover:bg-sky-100 flex items-center justify-center shrink-0 transition-colors duration-150">
+          <Tv class="w-5 h-5 text-sky-400 group-hover:text-sky-500 transition-colors duration-150" />
         </div>
         <div class="flex-1 min-w-0">
           <p class="font-display font-semibold text-ink-900 text-base truncate">{{ item.name }}</p>
@@ -355,7 +384,14 @@ onMounted(() => {
             {{ t('sharingAnimeFolder', { count: item.seasonCount }) }} · {{ item.archiveCount }} {{ t('sharingArchives') }}
           </p>
         </div>
-        <ChevronRight class="w-4 h-4 text-ink-300 group-hover:text-sakura-400 shrink-0 transition-colors duration-200" />
+        <ChevronRight class="w-4 h-4 text-ink-300 group-hover:text-sakura-400 shrink-0 transition-colors duration-150" />
+      </button>
+      <button
+        v-if="animeFolders.length > animeVisible"
+        @click="showMoreAnime"
+        class="self-center mt-2 px-4 py-2 text-sm text-ink-500 hover:text-sakura-500 transition-colors"
+      >
+        {{ t('sharingShowMore', { remaining: animeFolders.length - animeVisible }) }}
       </button>
       <KEmpty v-if="animeFolders.length === 0" :title="t('sharingNoResults')" />
     </div>
@@ -369,16 +405,16 @@ onMounted(() => {
         v-for="item in seasonFolders.seasons"
         :key="item.name"
         @click="navigateTo(2, item.name)"
-        class="card px-5 py-4 flex items-center gap-4 hover:shadow-md hover:border-sakura-200 transition-all duration-200 cursor-pointer group active:scale-[0.99] text-left"
+        class="card px-5 py-4 flex items-center gap-4 hover:shadow-md hover:border-sakura-200 transition-colors duration-150 cursor-pointer group text-left"
       >
-        <div class="w-10 h-10 rounded-xl bg-mint-50 group-hover:bg-mint-100 flex items-center justify-center shrink-0 transition-colors duration-200">
-          <FolderOpen class="w-5 h-5 text-mint-400 group-hover:text-mint-500 transition-colors duration-200" />
+        <div class="w-10 h-10 rounded-xl bg-mint-50 group-hover:bg-mint-100 flex items-center justify-center shrink-0 transition-colors duration-150">
+          <FolderOpen class="w-5 h-5 text-mint-400 group-hover:text-mint-500 transition-colors duration-150" />
         </div>
         <div class="flex-1 min-w-0">
           <p class="font-display font-semibold text-ink-900 text-base">{{ item.name }}</p>
           <p class="text-xs text-ink-400 mt-0.5">{{ t('sharingSeasonFolder', { count: item.archiveCount }) }}</p>
         </div>
-        <ChevronRight class="w-4 h-4 text-ink-300 group-hover:text-sakura-400 shrink-0 transition-colors duration-200" />
+        <ChevronRight class="w-4 h-4 text-ink-300 group-hover:text-sakura-400 shrink-0 transition-colors duration-150" />
       </button>
 
       <!-- Sub-entries info -->
@@ -419,7 +455,7 @@ onMounted(() => {
 
       <div class="flex flex-col gap-3">
         <ArchiveCard
-          v-for="result in filteredArchives"
+          v-for="result in searchResultsPaged"
           :key="result.id"
           :archive="result"
           :is-admin="isAdmin"
@@ -430,6 +466,13 @@ onMounted(() => {
           @edit="editingArchive = result"
           @delete="confirmDelete(result)"
         />
+        <button
+          v-if="filteredArchives.length > searchVisible"
+          @click="showMoreSearch"
+          class="self-center mt-2 px-4 py-2 text-sm text-ink-500 hover:text-sakura-500 transition-colors"
+        >
+          {{ t('sharingShowMore', { remaining: filteredArchives.length - searchVisible }) }}
+        </button>
       </div>
 
       <KEmpty v-if="filteredArchives.length === 0" :title="t('sharingNoResults')" :description="t('sharingNoResultsDesc')" />

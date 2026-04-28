@@ -7,6 +7,7 @@ import { Toaster } from "vue-sonner";
 import KButton from "./components/KButton.vue";
 import KInput from "./components/KInput.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
+import ConfirmDialog from "./components/ConfirmDialog.vue";
 import { getApiKey, setApiKey, clearApiKey } from "./api/client";
 import { useSettings } from "./composables/useSettings";
 import { preconnectWaline, preloadWalineAssets } from "./lib/waline-loader";
@@ -176,6 +177,9 @@ watchEffect(() => {
     }"
   />
 
+  <!-- Global confirm dialog -->
+  <ConfirmDialog />
+
   <div class="min-h-screen bg-page flex flex-col">
     <!-- ─── Navigation ────────────────────────────────────────────────────── -->
     <header class="sticky top-0 z-40 bg-surface/90 backdrop-blur-md border-b border-sakura-100 shadow-[var(--shadow-sm)]">
@@ -195,7 +199,7 @@ watchEffect(() => {
           <button
             v-for="item in navItems"
             :key="item.path"
-            class="px-3 h-8 rounded-xl text-sm font-medium transition-all duration-150"
+            class="px-3 h-8 rounded-xl text-sm font-medium transition-colors duration-150"
             :class="isNavActive(item.path)
               ? 'bg-sakura-400 text-white shadow-[var(--shadow-sm)]'
               : 'text-ink-600 hover:bg-sakura-50 hover:text-sakura-600'"
@@ -212,7 +216,7 @@ watchEffect(() => {
         <!-- ─── Settings popover trigger (desktop) ────────────────────────── -->
         <div class="relative hidden md:block">
           <button
-            class="flex items-center gap-1.5 h-8 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-all duration-150"
+            class="flex items-center gap-1.5 h-8 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-colors duration-150"
             :class="settingsOpen && 'bg-sakura-50 text-sakura-600'"
             @click="settingsOpen = !settingsOpen; mobileMenuOpen = false"
           >
@@ -236,7 +240,7 @@ watchEffect(() => {
 
         <!-- API Key button (desktop) -->
         <button
-          class="hidden md:flex items-center gap-1.5 h-8 px-3 rounded-xl text-xs font-medium transition-all duration-150"
+          class="hidden md:flex items-center gap-1.5 h-8 px-3 rounded-xl text-xs font-medium transition-colors duration-150"
           :class="hasKey
             ? 'text-mint-600 bg-mint-100 hover:bg-mint-100/80'
             : 'text-amber-400 bg-amber-100 hover:bg-amber-100/80'"
@@ -248,7 +252,7 @@ watchEffect(() => {
 
         <!-- Dark mode toggle (desktop) -->
         <button
-          class="hidden md:flex items-center gap-1.5 h-8 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-all duration-150"
+          class="hidden md:flex items-center gap-1.5 h-8 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-colors duration-150"
           @click="cycleTheme"
           :title="themeMode === 'system' ? t('themeSystem') : themeMode === 'dark' ? t('themeDark') : t('themeLight')"
         >
@@ -262,7 +266,7 @@ watchEffect(() => {
 
         <!-- Language toggle (desktop) -->
         <button
-          class="hidden md:flex items-center gap-1.5 h-8 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-all duration-150"
+          class="hidden md:flex items-center gap-1.5 h-8 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-colors duration-150"
           @click="toggleLang"
         >
           <Globe class="w-3.5 h-3.5" />
@@ -271,7 +275,7 @@ watchEffect(() => {
 
         <!-- Hamburger (mobile only) -->
         <button
-          class="md:hidden flex items-center justify-center w-9 h-9 rounded-xl text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-all duration-150"
+          class="md:hidden flex items-center justify-center w-9 h-9 rounded-xl text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-colors duration-150"
           @click="mobileMenuOpen = !mobileMenuOpen; settingsOpen = false"
           :aria-label="mobileMenuOpen ? 'Close menu' : 'Open menu'"
         >
@@ -290,7 +294,7 @@ watchEffect(() => {
           <button
             v-for="item in navItems"
             :key="item.path"
-            class="flex items-center w-full px-4 h-10 rounded-xl text-sm font-medium transition-all duration-150 text-left"
+            class="flex items-center w-full px-4 h-10 rounded-xl text-sm font-medium transition-colors duration-150 text-left"
             :class="isNavActive(item.path)
               ? 'bg-sakura-400 text-white shadow-[var(--shadow-sm)]'
               : 'text-ink-600 hover:bg-sakura-50 hover:text-sakura-600'"
@@ -305,7 +309,7 @@ watchEffect(() => {
 
           <!-- API Key row -->
           <button
-            class="flex items-center gap-2 w-full px-4 h-10 rounded-xl text-sm font-medium transition-all duration-150"
+            class="flex items-center gap-2 w-full px-4 h-10 rounded-xl text-sm font-medium transition-colors duration-150"
             :class="hasKey
               ? 'text-mint-600 hover:bg-mint-50'
               : 'text-amber-500 hover:bg-amber-50'"
@@ -318,7 +322,7 @@ watchEffect(() => {
           <!-- Lang + Settings + Theme row -->
           <div class="flex items-center gap-2 px-1 pb-1">
             <button
-              class="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-all duration-150"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-colors duration-150"
               @click="cycleTheme"
             >
               <Moon v-if="themeMode === 'dark'" class="w-3.5 h-3.5" />
@@ -326,14 +330,14 @@ watchEffect(() => {
               <template v-else><Moon class="w-3.5 h-3.5 dark:hidden" /><Sun class="w-3.5 h-3.5 hidden dark:block" /></template>
             </button>
             <button
-              class="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-all duration-150"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-colors duration-150"
               @click="toggleLang"
             >
               <Globe class="w-3.5 h-3.5" />
               {{ locale === "zh-CN" ? "EN" : "中文" }}
             </button>
             <button
-              class="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-all duration-150"
+              class="flex items-center gap-1.5 h-9 px-3 rounded-xl text-xs font-medium text-ink-600 hover:bg-sakura-50 hover:text-sakura-600 transition-colors duration-150"
               @click="settingsOpen = true; mobileMenuOpen = false"
             >
               <Settings2 class="w-3.5 h-3.5" />

@@ -42,6 +42,8 @@ const uploadError = ref("");
 const uploadProgress = ref(0);
 
 const LANG_OPTIONS = ["chs", "cht", "jpn", "chs_jpn", "cht_jpn", "sc", "tc", "eng"];
+const LETTER_OPTIONS = ["A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","W","X","Y","Z","#"];
+const SEASON_OPTIONS = ["S1","S2","S3","S4","Movie","SPs","OVA","合集"];
 
 const canSubmit = computed(() =>
   uploadForm.value.name_cn.trim() &&
@@ -91,9 +93,14 @@ async function submitContribute() {
   if (!uploadFile.value || uploadSubmitting.value) return;
   uploadError.value = "";
   uploadProgress.value = 0;
+  let letter = uploadForm.value.letter.toUpperCase();
+  if (!letter) {
+    const first = uploadForm.value.name_cn.charAt(0).toUpperCase();
+    letter = /^[A-Z]$/.test(first) ? first : "#";
+  }
   const meta = {
     name_cn: uploadForm.value.name_cn,
-    letter: uploadForm.value.letter.toUpperCase() || uploadForm.value.name_cn.charAt(0).toUpperCase(),
+    letter,
     season: uploadForm.value.season,
     sub_group: uploadForm.value.sub_group,
     languages: uploadForm.value.languages,
@@ -234,7 +241,7 @@ function handleClose() {
                   @focus="showAutoComplete = true"
                   @blur="closeAutoCompleteSoon"
                   autocomplete="off"
-                  class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-all duration-150"
+                  class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-colors duration-150"
                   :placeholder="t('sharingAnimeNamePlaceholder')"
                 />
                 <!-- Autocomplete dropdown -->
@@ -254,14 +261,15 @@ function handleClose() {
                   </button>
                 </div>
               </div>
-              <div class="w-20">
+              <div class="w-24">
                 <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingLetter') }}</label>
-                <input
+                <select
                   v-model="uploadForm.letter"
-                  maxlength="1"
-                  class="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-center uppercase bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-all duration-150"
-                  placeholder="A"
-                />
+                  class="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm text-center uppercase bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-colors duration-150"
+                >
+                  <option value="">{{ t('sharingLetterAuto') }}</option>
+                  <option v-for="L in LETTER_OPTIONS" :key="L" :value="L">{{ L }}</option>
+                </select>
               </div>
             </div>
 
@@ -271,9 +279,9 @@ function handleClose() {
                 <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingSeason') }} *</label>
                 <select
                   v-model="uploadForm.season"
-                  class="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-all duration-150"
+                  class="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-colors duration-150"
                 >
-                  <option v-for="s in ['S1','S2','S3','S4','Movie','SPs','OVA']" :key="s" :value="s">{{ s }}</option>
+                  <option v-for="s in SEASON_OPTIONS" :key="s" :value="s">{{ s }}</option>
                 </select>
               </div>
               <div class="flex-1 relative">
@@ -283,7 +291,7 @@ function handleClose() {
                   @focus="showSubGroupAC = true"
                   @blur="closeSubGroupAutoCompleteSoon"
                   autocomplete="off"
-                  class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-all duration-150"
+                  class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-colors duration-150"
                   :placeholder="t('sharingSubGroupPlaceholder')"
                 />
                 <!-- Sub-group autocomplete dropdown -->
@@ -311,7 +319,7 @@ function handleClose() {
                   v-for="lang in LANG_OPTIONS"
                   :key="lang"
                   @click="toggleLang(lang)"
-                  class="px-3.5 py-2 rounded-xl text-xs font-medium border-2 transition-all duration-150"
+                  class="px-3.5 py-2 rounded-xl text-xs font-medium border-2 transition-colors duration-150"
                   :class="uploadForm.languages.includes(lang)
                     ? 'bg-sakura-50 border-sakura-300 text-sakura-700 shadow-sm'
                     : 'bg-surface border-ink-100 text-ink-400 hover:border-sakura-200 hover:text-ink-600'"
@@ -334,7 +342,7 @@ function handleClose() {
               <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingContributor') }}</label>
               <input
                 v-model="uploadForm.contributor"
-                class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-all duration-150"
+                class="w-full px-3.5 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-colors duration-150"
                 :placeholder="t('sharingContributorPlaceholder')"
               />
             </div>
@@ -442,7 +450,7 @@ function handleClose() {
             </div>
             <div class="w-full h-2 rounded-full bg-ink-100 overflow-hidden">
               <div
-                class="h-full rounded-full bg-gradient-to-r from-sakura-400 to-sakura-500 transition-all duration-300 ease-out"
+                class="h-full rounded-full bg-gradient-to-r from-sakura-400 to-sakura-500 transition-[width] duration-300 ease-out"
                 :style="{ width: `${uploadProgress}%` }"
               />
             </div>

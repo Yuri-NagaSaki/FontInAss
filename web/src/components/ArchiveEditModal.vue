@@ -89,7 +89,7 @@ async function submit() {
                 <div class="w-32">
                   <label class="text-xs font-medium text-ink-500 mb-1.5 block">{{ t('sharingSeason') }}</label>
                   <select v-model="editForm.season" class="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50">
-                    <option v-for="s in ['S1','S2','S3','S4','Movie','SPs','OVA']" :key="s" :value="s">{{ s }}</option>
+                    <option v-for="s in ['S1','S2','S3','S4','Movie','SPs','OVA','合集']" :key="s" :value="s">{{ s }}</option>
                   </select>
                 </div>
                 <div class="flex-1">
@@ -104,7 +104,7 @@ async function submit() {
                     v-for="lang in LANG_OPTIONS"
                     :key="lang"
                     @click="toggleLang(lang)"
-                    class="px-3.5 py-2 rounded-xl text-xs font-medium border-2 transition-all duration-150"
+                    class="px-3.5 py-2 rounded-xl text-xs font-medium border-2 transition-colors duration-150"
                     :class="editForm.languages.includes(lang)
                       ? 'bg-sakura-50 border-sakura-300 text-sakura-700 shadow-sm'
                       : 'bg-surface border-ink-100 text-ink-400 hover:border-sakura-200 hover:text-ink-600'"

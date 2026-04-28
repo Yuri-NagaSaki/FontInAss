@@ -34,7 +34,7 @@ const iconTextClass = props.variant === "search" ? "text-sky-400" : "text-sakura
 </script>
 
 <template>
-  <div class="card p-4 hover:shadow-md transition-all duration-200 group">
+  <div class="card p-4 hover:shadow-md transition-shadow duration-200 group">
     <div class="flex items-start gap-3">
       <div class="w-10 h-10 rounded-xl flex items-center justify-center shrink-0 mt-0.5" :class="iconBgClass">
         <FileArchive class="w-5 h-5" :class="iconTextClass" />
@@ -70,7 +70,7 @@ const iconTextClass = props.variant === "search" ? "text-sky-400" : "text-sakura
       </div>
       <button
         @click="$emit('download')"
-        class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-sakura-400 hover:text-white hover:bg-sakura-500 transition-all duration-200 active:scale-95 mt-0.5"
+        class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-sakura-400 hover:text-white hover:bg-sakura-500 transition-colors duration-150 active:scale-95 mt-0.5"
         :title="t('download')"
       >
         <Download class="w-4 h-4" />
@@ -79,7 +79,7 @@ const iconTextClass = props.variant === "search" ? "text-sky-400" : "text-sakura
       <template v-if="isAdmin">
         <button
           @click="$emit('preview')"
-          class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-sky-400 hover:text-white hover:bg-sky-500 transition-all duration-200 active:scale-95 mt-0.5"
+          class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-sky-400 hover:text-white hover:bg-sky-500 transition-colors duration-150 active:scale-95 mt-0.5"
           :title="t('sharingPreview')"
         >
           <Eye class="w-4 h-4" />
@@ -87,21 +87,21 @@ const iconTextClass = props.variant === "search" ? "text-sky-400" : "text-sakura
         <button
           v-if="variant === 'default'"
           @click="$emit('download-file')"
-          class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-mint-400 hover:text-white hover:bg-mint-500 transition-all duration-200 active:scale-95 mt-0.5"
+          class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-mint-400 hover:text-white hover:bg-mint-500 transition-colors duration-150 active:scale-95 mt-0.5"
           :title="t('sharingDownload')"
         >
           <Download class="w-4 h-4" />
         </button>
         <button
           @click="$emit('edit')"
-          class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-amber-400 hover:text-white hover:bg-amber-500 transition-all duration-200 active:scale-95 mt-0.5"
+          class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-amber-400 hover:text-white hover:bg-amber-500 transition-colors duration-150 active:scale-95 mt-0.5"
           :title="t('sharingEdit')"
         >
           <Pencil class="w-4 h-4" />
         </button>
         <button
           @click="$emit('delete')"
-          class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-red-400 hover:text-white hover:bg-red-500 transition-all duration-200 active:scale-95 mt-0.5"
+          class="shrink-0 w-9 h-9 rounded-xl flex items-center justify-center text-red-400 hover:text-white hover:bg-red-500 transition-colors duration-150 active:scale-95 mt-0.5"
           :title="t('delete')"
         >
           <Trash2 class="w-4 h-4" />

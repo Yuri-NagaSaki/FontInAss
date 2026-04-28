@@ -488,7 +488,7 @@ const summaryText = (entry: FileEntry) => {
                 >
                   <span class="flex-1 break-all">{{ pm.raw }}</span>
                   <button
-                    class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-sans font-medium transition-all duration-150 outline-none"
+                    class="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-sans font-medium transition-colors duration-150 outline-none"
                     :class="copiedKeys.has(`msg-${i}-${entry.key}`)
                       ? 'bg-mint-100 text-mint-600'
                       : 'opacity-0 group-hover:opacity-100 bg-black/5 text-ink-400 hover:text-ink-700 hover:bg-black/10'"

@@ -92,7 +92,7 @@ onBeforeUnmount(() => {
       <span class="text-sm font-medium text-ink-700 shrink-0">{{ t('uploadDir') }}</span>
       <input
         v-model="uploadDir"
-        class="flex-1 h-8 px-3 rounded-lg border border-ink-200 text-sm font-mono text-ink-700 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-all"
+        class="flex-1 h-8 px-3 rounded-lg border border-ink-200 text-sm font-mono text-ink-700 focus:border-sakura-400 focus:ring-2 focus:ring-sakura-400/20 outline-none transition-colors"
         placeholder="CatCat-Fonts/"
       />
     </div>

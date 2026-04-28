@@ -19,7 +19,7 @@ export default defineConfig({
           "vendor-vue":   ["vue", "vue-router", "vue-i18n"],
           "vendor-icons": ["lucide-vue-next"],
           "vendor-waline": ["@waline/client"],
-          "vendor-utils": ["@vueuse/core", "lodash-es"],
+          "vendor-utils": ["@vueuse/core"],
         },
       },
     },
