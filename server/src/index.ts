@@ -17,6 +17,8 @@ import subsetRoute from "./routes/subset.js";
 import sharingRoute from "./routes/sharing.js";
 import logsRoute from "./routes/logs.js";
 import uploadRoute from "./routes/upload.js";
+import apiUploadRoute from "./routes/api-upload.js";
+import apiTokensRoute from "./routes/api-tokens.js";
 import { startScheduler, stopScheduler } from "./lib/scheduler.js";
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
@@ -73,6 +75,8 @@ app.route("/api/fonts", fontsRoute);
 app.route("/api/subset", subsetRoute);
 app.route("/api/sharing", sharingRoute);
 app.route("/api/upload", uploadRoute);
+app.route("/api/v1", apiUploadRoute);
+app.route("/api/api-tokens", apiTokensRoute);
 app.route("/api/logs", logsRoute);
 
 // Health check — requires API key when configured

@@ -21,8 +21,44 @@ CREATE TABLE IF NOT EXISTS font_files (
   filename    TEXT NOT NULL,
   r2_key      TEXT NOT NULL UNIQUE,
   size        INTEGER NOT NULL DEFAULT 0,
+  sha256      TEXT,
   created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
+
+-- API upload tokens — third-party programmatic font uploads
+CREATE TABLE IF NOT EXISTS api_upload_tokens (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  prefix        TEXT NOT NULL UNIQUE,
+  token_hash    TEXT NOT NULL,
+  enabled       INTEGER NOT NULL DEFAULT 1,
+  note          TEXT,
+  upload_count  INTEGER NOT NULL DEFAULT 0,
+  total_bytes   INTEGER NOT NULL DEFAULT 0,
+  last_used_at  TEXT,
+  last_used_ip  TEXT,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_tokens_prefix ON api_upload_tokens(prefix);
+
+-- Per-upload audit log for API uploads
+CREATE TABLE IF NOT EXISTS api_upload_history (
+  id            TEXT PRIMARY KEY,
+  token_id      TEXT NOT NULL REFERENCES api_upload_tokens(id) ON DELETE CASCADE,
+  font_file_id  TEXT,
+  filename      TEXT NOT NULL,
+  size          INTEGER NOT NULL DEFAULT 0,
+  sha256        TEXT,
+  status        TEXT NOT NULL,
+  error         TEXT,
+  client_ip     TEXT,
+  user_agent    TEXT,
+  uploaded_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_history_token ON api_upload_history(token_id, uploaded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_api_history_status ON api_upload_history(status);
 
 CREATE TABLE IF NOT EXISTS font_info (
   id          TEXT PRIMARY KEY,
@@ -114,6 +150,22 @@ export function getDb(): Database {
 
   _db = new Database(config.dbPath, { create: true });
   _db.run(SCHEMA);
+
+  // ── Idempotent column migrations (for DBs created before sha256 was added) ──
+  try {
+    const cols = _db
+      .prepare<{ name: string }, []>("PRAGMA table_info(font_files)")
+      .all()
+      .map(r => r.name);
+    if (!cols.includes("sha256")) {
+      _db.run("ALTER TABLE font_files ADD COLUMN sha256 TEXT");
+      log("info", "[db] migrated: added font_files.sha256 column");
+    }
+    _db.run("CREATE INDEX IF NOT EXISTS idx_font_files_sha256 ON font_files(sha256)");
+  } catch (e) {
+    log("warn", "[db] sha256 column migration check failed:", e);
+  }
+
   log("info", `[db] opened at ${config.dbPath}`);
   return _db;
 }

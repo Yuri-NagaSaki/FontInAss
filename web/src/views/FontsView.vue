@@ -4,7 +4,7 @@ import { useI18n } from "vue-i18n";
 import {
   FolderOpen,
   KeyRound, Database, CloudUpload, CheckCircle2,
-  Share2,
+  Share2, KeyRound as KeyRound2,
 } from "lucide-vue-next";
 import { getApiKey, setApiKey } from "../api/client";
 import KButton from "../components/KButton.vue";
@@ -13,6 +13,7 @@ import FontUploadPane from "../components/FontUploadPane.vue";
 import IndexStatsPane from "../components/IndexStatsPane.vue";
 import FontListPane from "../components/FontListPane.vue";
 import R2BrowserPane from "../components/R2BrowserPane.vue";
+import ApiTokensPane from "../components/ApiTokensPane.vue";
 import { useIndexState } from "../composables/useIndexState";
 
 const { t } = useI18n();
@@ -29,7 +30,7 @@ const unlockWithKey = () => {
 };
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
-type Tab = "list" | "browser" | "upload" | "stats" | "sharing";
+type Tab = "list" | "browser" | "upload" | "stats" | "sharing" | "apiTokens";
 const activeTab = ref<Tab>("list");
 
 // Child refs
@@ -119,6 +120,7 @@ const handleFontChanged = () => {
           { id: 'upload',  icon: CloudUpload,  label: t('uploadFonts')  },
           { id: 'stats',   icon: CheckCircle2, label: t('indexStats')   },
           { id: 'sharing', icon: Share2,        label: t('sharingFontsTab') },
+          { id: 'apiTokens', icon: KeyRound2,   label: t('navApiTokens') },
         ]"
         :key="tab.id"
         class="flex items-center gap-1.5 h-8 px-4 rounded-xl text-sm font-medium transition-colors duration-150"
@@ -144,6 +146,9 @@ const handleFontChanged = () => {
 
     <!-- ─── Tab: Sharing Admin ─────────────────────────────────────────────── -->
     <SharingAdminPane v-if="activeTab === 'sharing'" />
+
+    <!-- ─── Tab: API Tokens ────────────────────────────────────────────────── -->
+    <ApiTokensPane v-if="activeTab === 'apiTokens'" />
   </div>
   </div>
 </template>

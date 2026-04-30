@@ -701,3 +701,119 @@ export async function getLogStats(): Promise<LogStats> {
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
+// ─── API Upload Tokens (admin) ────────────────────────────────────────────────
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  prefix: string;
+  enabled: boolean;
+  note: string | null;
+  upload_count: number;
+  total_bytes: number;
+  last_used_at: string | null;
+  last_used_ip: string | null;
+  created_at: string;
+}
+
+export interface ApiTokenStats {
+  totals: { tokens: number; uploads: number; bytes: number };
+  byStatus: { success: number; duplicate: number; rejected: number; error: number };
+}
+
+export type ApiUploadStatus = "success" | "duplicate" | "rejected" | "error";
+
+export interface ApiUploadHistoryItem {
+  id: string;
+  token_id: string;
+  font_file_id: string | null;
+  filename: string;
+  size: number;
+  sha256: string | null;
+  status: ApiUploadStatus;
+  error: string | null;
+  client_ip: string | null;
+  user_agent: string | null;
+  uploaded_at: string;
+}
+
+export interface ApiHistoryResponse {
+  total: number;
+  page: number;
+  limit: number;
+  data: ApiUploadHistoryItem[];
+  token?: ApiToken;
+}
+
+export async function listApiTokens(): Promise<ApiToken[]> {
+  const res = await fetch(`${BASE}/api/api-tokens`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await res.text());
+  const json = await res.json() as { data: ApiToken[] };
+  return json.data ?? [];
+}
+
+export async function getApiTokenStats(): Promise<ApiTokenStats> {
+  const res = await fetch(`${BASE}/api/api-tokens/stats`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function createApiToken(input: { name: string; note?: string }): Promise<{ token: ApiToken; plaintext: string }> {
+  const res = await fetch(`${BASE}/api/api-tokens`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+    throw new Error((body.error as string) || `HTTP ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function updateApiToken(
+  id: string,
+  patch: { name?: string; note?: string | null; enabled?: boolean },
+): Promise<ApiToken> {
+  const res = await fetch(`${BASE}/api/api-tokens/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const json = await res.json() as { token: ApiToken };
+  return json.token;
+}
+
+export async function deleteApiToken(id: string): Promise<void> {
+  const res = await fetch(`${BASE}/api/api-tokens/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
+export async function getApiTokenHistory(
+  id: string,
+  page = 1,
+  limit = 50,
+  status?: ApiUploadStatus,
+): Promise<ApiHistoryResponse> {
+  const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+  if (status) params.set("status", status);
+  const res = await fetch(`${BASE}/api/api-tokens/${id}/history?${params}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function getAllApiHistory(
+  page = 1,
+  limit = 50,
+  status?: ApiUploadStatus,
+): Promise<ApiHistoryResponse> {
+  const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+  if (status) params.set("status", status);
+  const res = await fetch(`${BASE}/api/api-tokens/history?${params}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}

@@ -112,61 +112,58 @@ async function autoIndex(): Promise<void> {
 
 async function autoDedup(): Promise<void> {
   const db = getDb();
-  const allRows = db.prepare<{ id: string; r2_key: string; size: number }, []>(
-    "SELECT id, r2_key, size FROM font_files"
-  ).all();
 
-  // Group by size first (cheap pre-filter), then hash
-  const bySize = new Map<number, typeof allRows>();
-  for (const row of allRows) {
-    const group = bySize.get(row.size) ?? [];
-    group.push(row);
-    bySize.set(row.size, group);
+  // Back-fill missing sha256 first (cheap once done; new uploads always set it)
+  const missingHashRows = db.prepare<{ id: string; r2_key: string }, []>(
+    "SELECT id, r2_key FROM font_files WHERE sha256 IS NULL OR sha256 = ''"
+  ).all();
+  if (missingHashRows.length > 0) {
+    log("info", `[scheduler:dedup] back-filling sha256 for ${missingHashRows.length} font(s)`);
+    const updateStmt = db.prepare<unknown, [string, string]>("UPDATE font_files SET sha256 = ? WHERE id = ?");
+    for (const row of missingHashRows) {
+      const bytes = await getFile(row.r2_key);
+      if (!bytes) continue;
+      const hash = createHash("sha256").update(bytes).digest("hex");
+      updateStmt.run(hash, row.id);
+    }
   }
 
-  const potentialDups = [...bySize.values()].filter(g => g.length > 1);
-  if (potentialDups.length === 0) {
-    log("info", "[scheduler:dedup] no potential duplicates found");
+  // Group by sha256 — single SQL query, no I/O needed.
+  const dupRows = db.prepare<{ sha256: string }, []>(`
+    SELECT sha256 FROM font_files
+     WHERE sha256 IS NOT NULL AND sha256 <> ''
+     GROUP BY sha256
+    HAVING COUNT(*) > 1
+  `).all();
+
+  if (dupRows.length === 0) {
+    log("info", "[scheduler:dedup] no duplicates found");
     return;
   }
 
   let dupSets = 0;
   let removed = 0;
 
-  for (const group of potentialDups) {
-    const hashMap = new Map<string, typeof group>();
+  for (const { sha256 } of dupRows) {
+    const entries = db.prepare<{ id: string; r2_key: string }, [string]>(
+      "SELECT id, r2_key FROM font_files WHERE sha256 = ? ORDER BY created_at ASC"
+    ).all(sha256);
+    if (entries.length <= 1) continue;
+    dupSets++;
 
-    for (const row of group) {
-      const bytes = await getFile(row.r2_key);
-      if (!bytes) continue;
-      const hash = createHash("sha256").update(bytes).digest("hex");
-      const existing = hashMap.get(hash) ?? [];
-      existing.push(row);
-      hashMap.set(hash, existing);
+    // Keep the oldest entry, remove the rest
+    const [keep, ...dups] = entries;
+    const dupIds = dups.map(d => d.id);
+
+    log("info", `[scheduler:dedup] keeping "${keep.r2_key}", removing ${dups.length} duplicate(s): ${dups.map(d => d.r2_key).join(", ")}`);
+
+    deleteFontsByIds(dupIds);
+    for (const dup of dups) {
+      try {
+        await deleteFile(dup.r2_key);
+      } catch { /* file may already be gone */ }
     }
-
-    for (const [, entries] of hashMap) {
-      if (entries.length <= 1) continue;
-      dupSets++;
-
-      // Keep the first entry, remove the rest
-      const [keep, ...dups] = entries;
-      const dupIds = dups.map(d => d.id);
-
-      log("info", `[scheduler:dedup] keeping "${keep.r2_key}", removing ${dups.length} duplicate(s): ${dups.map(d => d.r2_key).join(", ")}`);
-
-      // Delete from DB (cascades to font_info + font_names)
-      deleteFontsByIds(dupIds);
-
-      // Delete files from disk
-      for (const dup of dups) {
-        try {
-          await deleteFile(dup.r2_key);
-        } catch { /* file may already be gone */ }
-      }
-
-      removed += dups.length;
-    }
+    removed += dups.length;
   }
 
   log("info", `[scheduler:dedup] done — ${dupSets} duplicate set(s), ${removed} file(s) removed`);
