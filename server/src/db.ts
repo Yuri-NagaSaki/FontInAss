@@ -217,6 +217,17 @@ export function runBatch(statements: Array<{ sql: string; params: unknown[] }>):
 }
 
 /** Batch-lookup font rows by name_lower (any count — chunked internally). */
+/** Build "?,?,?,..." with N placeholders. Asserts N matches the value count to
+ *  prevent any future divergence between placeholders and bound parameters. */
+function inClause(values: readonly unknown[]): string {
+  const placeholders = values.map(() => "?").join(",");
+  // Defensive: ensure placeholder count matches the array length we'll spread.
+  if (placeholders.split(",").length !== values.length) {
+    throw new Error(`inClause length mismatch: ${placeholders.split(",").length} vs ${values.length}`);
+  }
+  return placeholders;
+}
+
 export function lookupFontsByNames(names: string[]): FontLookupRow[] {
   if (names.length === 0) return [];
   const db = getDb();
@@ -224,7 +235,7 @@ export function lookupFontsByNames(names: string[]): FontLookupRow[] {
   const rows: FontLookupRow[] = [];
   for (let i = 0; i < names.length; i += CHUNK) {
     const chunk = names.slice(i, i + CHUNK);
-    const placeholders = chunk.map(() => "?").join(",");
+    const placeholders = inClause(chunk);
     const partial = db.prepare<FontLookupRow, unknown[]>(`
       SELECT fn.name_lower, fi.font_index, fi.weight, fi.bold, fi.italic, ff.r2_key
       FROM font_names fn
@@ -245,7 +256,7 @@ export function findExistingKeys(keys: string[]): Set<string> {
   const found = new Set<string>();
   for (let i = 0; i < keys.length; i += CHUNK) {
     const chunk = keys.slice(i, i + CHUNK);
-    const placeholders = chunk.map(() => "?").join(",");
+    const placeholders = inClause(chunk);
     const rows = db.prepare<{ r2_key: string }, unknown[]>(
       `SELECT r2_key FROM font_files WHERE r2_key IN (${placeholders})`
     ).all(...chunk);
@@ -263,7 +274,7 @@ export function deleteFontsByIds(ids: string[]): string[] {
   const tx = db.transaction(() => {
     for (let i = 0; i < ids.length; i += CHUNK) {
       const chunk = ids.slice(i, i + CHUNK);
-      const placeholders = chunk.map(() => "?").join(",");
+      const placeholders = inClause(chunk);
       const rows = db.prepare<{ r2_key: string }, unknown[]>(
         `SELECT r2_key FROM font_files WHERE id IN (${placeholders})`
       ).all(...chunk);

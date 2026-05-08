@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, reactive, watch, onMounted, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
 import { Trash2, RefreshCcw, Search, CheckCircle2, Loader2 } from "lucide-vue-next";
 import { listFonts, deleteFont, deleteFontsBatch } from "../api/client";
 import type { FontItem } from "../api/client";
@@ -50,7 +49,7 @@ const loadFontList = async (reset = true) => {
     fontAllLoaded.value = fonts.value.length >= res.total;
     fontPage.value++;
   } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
+    useConfirm().alert({ title: t('errorTitle'), message: String(e instanceof Error ? e.message : e), variant: 'danger' });
   } finally {
     fontLoading.value = false;
   }
@@ -99,7 +98,7 @@ const deleteSelected = async () => {
     showDeleteNotice(`×${ids.length} ${t("deleted")}`);
     loadFontList(true);
   } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
+    useConfirm().alert({ title: t('errorTitle'), message: String(e instanceof Error ? e.message : e), variant: 'danger' });
   }
 };
 
@@ -109,7 +108,7 @@ const deleteSingle = async (id: string) => {
     showDeleteNotice(t("deleted"));
     loadFontList(true);
   } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
+    useConfirm().alert({ title: t('errorTitle'), message: String(e instanceof Error ? e.message : e), variant: 'danger' });
   }
 };
 

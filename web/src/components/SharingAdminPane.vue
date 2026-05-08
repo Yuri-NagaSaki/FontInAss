@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
 import {
   Clock, RefreshCcw, FileArchive, Upload, X,
   DatabaseZap, Loader2, ChevronDown, CheckCheck, XOctagon,
-  Inbox, CloudUpload,
+  Inbox, CloudUpload, Folder,
 } from "lucide-vue-next";
 import {
   listPendingArchives, uploadSharedArchive,
@@ -47,7 +46,7 @@ async function loadPending(showSpinner = true) {
       if (!present.has(id)) selectedIds.value.delete(id);
     }
   } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
+    useConfirm().alert({ title: t('errorTitle'), message: String(e instanceof Error ? e.message : e), variant: 'danger' });
   } finally {
     pendingLoading.value = false;
   }
@@ -88,10 +87,9 @@ async function handleApprove(id: string) {
   setBusy(id, true);
   try {
     await approveArchive(id);
-    toast.success(t("sharingApproveSuccess"));
     removeFromList(id);
   } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
+    useConfirm().alert({ title: t('errorTitle'), message: String(e instanceof Error ? e.message : e), variant: 'danger' });
   } finally {
     setBusy(id, false);
   }
@@ -101,10 +99,9 @@ async function handleReject(id: string) {
   setBusy(id, true);
   try {
     await rejectArchive(id);
-    toast.success(t("sharingRejectSuccess"));
     removeFromList(id);
   } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
+    useConfirm().alert({ title: t('errorTitle'), message: String(e instanceof Error ? e.message : e), variant: 'danger' });
   } finally {
     setBusy(id, false);
   }
@@ -150,8 +147,9 @@ async function bulkAction(action: "approve" | "reject") {
     }),
   );
   bulkRunning.value = false;
-  if (fail === 0) toast.success(t("sharingBulkSuccess", { n: ok }));
-  else toast.error(t("sharingBulkPartial", { ok, fail }));
+  if (fail > 0) {
+    useConfirm().alert({ title: t('errorTitle'), message: t('sharingBulkPartial', { ok, fail }), variant: 'warning' });
+  }
 }
 
 // ── Last refreshed display ────────────────────────────────────────────────────
@@ -230,6 +228,22 @@ const canUpload = computed(() =>
   !sharingUploadSubmitting.value
 );
 
+const sharingTargetPath = computed(() => {
+  const f = sharingUploadForm.value;
+  const name = f.name_cn.trim();
+  let letter = f.letter.trim().toUpperCase();
+  if (!letter && name) {
+    const first = name.charAt(0).toUpperCase();
+    letter = /[A-Z]/.test(first) ? first : "?";
+  }
+  return {
+    letter: letter || "?",
+    name: name || "—",
+    season: f.season || "S1",
+    file: sharingUploadFile.value?.name || "—",
+  };
+});
+
 async function sharingSubmitUpload() {
   if (!sharingUploadFile.value || sharingUploadSubmitting.value) return;
   if (!sharingUploadForm.value.letter.trim() && sharingUploadForm.value.name_cn.trim()) {
@@ -247,11 +261,10 @@ async function sharingSubmitUpload() {
   sharingUploadSubmitting.value = true;
   try {
     await uploadSharedArchive(sharingUploadFile.value, meta);
-    toast.success(t("sharingPublished"));
     sharingResetForm();
     uploadOpen.value = false;
   } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
+    useConfirm().alert({ title: t('errorTitle'), message: String(e instanceof Error ? e.message : e), variant: 'danger' });
   } finally {
     sharingUploadSubmitting.value = false;
   }
@@ -286,7 +299,7 @@ function sharingStartImport() {
   importIndexSSE(
     (data) => { sharingImportProgress.value = data; },
     () => { sharingIsImporting.value = false; loadPending(false); },
-    (err) => { sharingIsImporting.value = false; sharingImportProgress.value = { phase: "error", message: err }; toast.error(err); },
+    (err) => { sharingIsImporting.value = false; sharingImportProgress.value = { phase: "error", message: err }; useConfirm().alert({ title: t('errorTitle'), message: err, variant: 'danger' }); },
   );
 }
 </script>
@@ -488,6 +501,23 @@ function sharingStartImport() {
               <span class="text-xs text-ink-400">({{ sharingUploadDetected }})</span>
             </div>
             <input ref="sharingFileInput" type="file" accept=".zip,.7z" class="hidden" @change="sharingHandleFileSelect($event)" />
+          </div>
+
+          <!-- Target path preview -->
+          <div class="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-sky-50/70 border border-sky-100">
+            <Folder class="w-4 h-4 mt-0.5 text-sky-500 shrink-0" />
+            <div class="min-w-0 flex-1">
+              <div class="text-[11px] font-medium text-sky-700 mb-0.5">{{ t('sharingTargetPath') }}</div>
+              <div class="font-mono text-xs text-ink-700 break-all">
+                <span class="font-bold text-sky-600">{{ sharingTargetPath.letter }}</span>
+                <span class="text-ink-300"> / </span>
+                <span>{{ sharingTargetPath.name }}</span>
+                <span class="text-ink-300"> / </span>
+                <span>{{ sharingTargetPath.season }}</span>
+                <span class="text-ink-300"> / </span>
+                <span class="text-ink-500">{{ sharingTargetPath.file }}</span>
+              </div>
+            </div>
           </div>
 
           <div class="flex items-center gap-2">

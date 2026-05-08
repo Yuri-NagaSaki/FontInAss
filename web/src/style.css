@@ -203,19 +203,11 @@ html { transition: background-color 0.3s, color 0.3s; }
   to { transform: rotate(360deg); }
 }
 
-@keyframes petal-drift {
-  0%   { transform: translateY(-20px) rotate(0deg);   opacity: 0; }
-  10%  { opacity: 1; }
-  90%  { opacity: 0.6; }
-  100% { transform: translateY(120vh) rotate(720deg); opacity: 0; }
-}
-
 .animate-fade-in       { animation: fade-in      0.4s var(--ease-out-quart) both; }
 .animate-fade-in-fast  { animation: fade-in-fast 0.2s var(--ease-out-quart) both; }
 .animate-slide-down    { animation: slide-down   0.3s var(--ease-out-quart) both; }
 .animate-scale-in      { animation: scale-in     0.25s var(--ease-out-quart) both; }
 .animate-spin-slow     { animation: spin-slow    1.2s linear infinite; }
-.animate-petal-drift   { animation: petal-drift  6s ease-in-out infinite; }
 
 /* Staggered list items */
 .stagger > *:nth-child(1)  { animation-delay: 0ms; }

@@ -2,8 +2,7 @@
 import { ref, computed, watchEffect, onMounted, onUnmounted } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter, useRoute } from "vue-router";
-import { KeyRound, Globe, Cherry, Settings2, ChevronDown, Menu, X, CheckCircle2, Moon, Sun } from "lucide-vue-next";
-import { Toaster } from "vue-sonner";
+import { KeyRound, Globe, Settings2, ChevronDown, Menu, X, CheckCircle2, Moon, Sun } from "lucide-vue-next";
 import KButton from "./components/KButton.vue";
 import KInput from "./components/KInput.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
@@ -161,36 +160,17 @@ watchEffect(() => {
 </script>
 
 <template>
-  <!-- Global toast provider -->
-  <Toaster
-    position="bottom-right"
-    :theme="themeMode === 'system' ? 'system' : themeMode"
-    :toastOptions="{
-      style: {
-        fontFamily: 'var(--font-body)',
-        borderRadius: '14px',
-        border: '1px solid var(--color-sakura-200)',
-        boxShadow: 'var(--shadow-md)',
-        background: 'var(--color-surface)',
-        color: 'var(--color-ink-950)',
-      },
-    }"
-  />
-
-  <!-- Global confirm dialog -->
+  <!-- Global confirm / alert dialog -->
   <ConfirmDialog />
 
   <div class="min-h-screen bg-page flex flex-col">
     <!-- ─── Navigation ────────────────────────────────────────────────────── -->
     <header class="sticky top-0 z-40 bg-surface/90 backdrop-blur-md border-b border-sakura-100 shadow-[var(--shadow-sm)]">
       <nav class="max-w-6xl mx-auto px-5 h-14 flex items-center gap-4">
-        <!-- Logo -->
-        <button class="flex items-center gap-2 shrink-0 group" @click="router.push('/')">
-          <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-sakura-300 to-sakura-500 flex items-center justify-center shadow-[var(--shadow-sm)] group-hover:shadow-[var(--shadow-md)] transition-shadow">
-            <Cherry class="w-4 h-4 text-white" :stroke-width="2.5" />
-          </div>
-          <span class="font-display font-semibold text-base text-ink-950 tracking-tight leading-none">
-            FontInAss
+        <!-- Wordmark -->
+        <button class="flex items-center shrink-0 group" @click="router.push('/')">
+          <span class="font-display font-black text-[1.35rem] tracking-[-0.02em] leading-none text-ink-900 group-hover:text-sakura-500 transition-colors duration-200">
+            FontIn<span class="text-sakura-500 group-hover:text-ink-900 transition-colors duration-200">Ass</span>
           </span>
         </button>
 

@@ -384,8 +384,9 @@ export function decodeAssBytes(bytes: Uint8Array): { encoding: string; text: str
 
 /** Check if text looks like SRT format */
 export function isSrt(text: string): boolean {
-  // SRT files have numbered entries like: digit(s) on a line by itself
-  return /^\s*\d+\s*\r?\n\d{2}:\d{2}:\d{2}[,\.]\d{3}\s*-->/m.test(text);
+  // SRT files have numbered entries like: digit(s) on a line by itself.
+  // Bounded quantifiers prevent catastrophic backtracking on adversarial input.
+  return /^[ \t]{0,8}\d{1,9}[ \t]{0,8}\r?\n\d{2}:\d{2}:\d{2}[,.]\d{3}[ \t]{0,8}-->/m.test(text);
 }
 
 /** Convert SRT to ASS with given format and style strings */

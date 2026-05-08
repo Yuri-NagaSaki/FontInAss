@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
 import {
   ScrollText, Search, ChevronLeft, ChevronRight, ChevronDown,
   Activity, CalendarDays, CheckCircle2, AlertTriangle, XCircle, Ban, Check, Undo2,
@@ -15,6 +14,7 @@ import KButton from "../components/KButton.vue";
 import KBadge from "../components/KBadge.vue";
 import KEmpty from "../components/KEmpty.vue";
 import KSpinner from "../components/KSpinner.vue";
+import { useConfirm } from "../composables/useConfirm";
 
 const { t } = useI18n();
 const hasKey = computed(() => !!getApiKey());
@@ -44,7 +44,7 @@ async function loadLogs() {
     logs.value = res.data;
     total.value = res.total;
   } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
+    useConfirm().alert({ title: t('errorTitle'), message: String(e instanceof Error ? e.message : e), variant: 'danger' });
   } finally {
     loading.value = false;
   }
@@ -77,7 +77,7 @@ async function toggleResolve(mf: MissingFontRanking) {
     }
     await loadMissing();
   } catch (e) {
-    toast.error(String(e instanceof Error ? e.message : e));
+    useConfirm().alert({ title: t('errorTitle'), message: String(e instanceof Error ? e.message : e), variant: 'danger' });
   } finally {
     resolvingFont.value = null;
   }

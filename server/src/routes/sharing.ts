@@ -23,11 +23,56 @@ import {
   SUBTITLE_EXTENSIONS,
 } from "../lib/archive-utils.js";
 import { createHash } from "node:crypto";
-import { mkdirSync, existsSync, unlinkSync, rmdirSync, readFileSync } from "node:fs";
-import { join, resolve, basename } from "node:path";
+import { mkdirSync, existsSync, readFileSync } from "node:fs";
+import { unlink, rmdir } from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
 import { streamSSE } from "hono/streaming";
 
 const sharing = new Hono();
+
+// ─── Safety helpers ───────────────────────────────────────────────────────────
+
+const MAX_META_LEN = 8 * 1024;
+
+function parseSafeJson<T>(raw: string): T {
+  if (raw.length > MAX_META_LEN) {
+    throw new Error(`metadata too large (${raw.length} > ${MAX_META_LEN})`);
+  }
+  const obj = JSON.parse(raw);
+  // Strip prototype-pollution vectors
+  if (obj && typeof obj === "object") {
+    delete (obj as Record<string, unknown>).__proto__;
+    delete (obj as Record<string, unknown>).constructor;
+    delete (obj as Record<string, unknown>).prototype;
+  }
+  return obj as T;
+}
+
+/**
+ * Best-effort cleanup of a pending file. Performs path-traversal validation,
+ * runs asynchronously to avoid blocking the event loop, and never throws so
+ * callers can always reach their DB-state-changing code first.
+ */
+async function safeCleanupPending(localPath: string | null | undefined): Promise<void> {
+  if (!localPath) return;
+  try {
+    const absolute = resolve(localPath);
+    const safeRoot = resolve(config.pendingDir);
+    if (!absolute.startsWith(safeRoot + sep) && absolute !== safeRoot) {
+      log("error", `[sharing] refused to clean up path outside pendingDir: ${absolute}`);
+      return;
+    }
+    if (existsSync(absolute)) {
+      try { await unlink(absolute); } catch { /* already gone */ }
+    }
+    const dir = resolve(absolute, "..");
+    if (dir.startsWith(safeRoot) && dir !== safeRoot) {
+      try { await rmdir(dir); } catch { /* not empty / already gone */ }
+    }
+  } catch (e) {
+    log("warn", `[sharing] cleanup error for ${localPath}:`, e);
+  }
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -103,15 +148,7 @@ function cleanupExpiredPending() {
     .all();
 
   for (const row of expired) {
-    if (row.local_path) {
-      try {
-        if (existsSync(row.local_path)) unlinkSync(row.local_path);
-        const dir = resolve(row.local_path, "..");
-        try { rmdirSync(dir); } catch { /* not empty, ok */ }
-      } catch (e) {
-        log("warn", `[sharing] failed to delete expired file ${row.local_path}:`, e);
-      }
-    }
+    void safeCleanupPending(row.local_path);
   }
 
   if (expired.length > 0) {
@@ -204,9 +241,9 @@ sharing.post("/upload", requireApiKey, async (c) => {
     has_fonts: boolean;
   };
   try {
-    meta = JSON.parse(metaStr);
-  } catch {
-    return c.json({ error: "Invalid metadata JSON" }, 400);
+    meta = parseSafeJson(metaStr);
+  } catch (e) {
+    return c.json({ error: `Invalid metadata JSON: ${e instanceof Error ? e.message : String(e)}` }, 400);
   }
 
   if (!meta.name_cn || !meta.letter || !meta.season || !meta.sub_group || !meta.languages?.length) {
@@ -226,6 +263,20 @@ sharing.post("/upload", requireApiKey, async (c) => {
 
   // Insert into DB
   const db = getDb();
+  // Drop any existing row with the same r2_key (republish): the R2 object was
+  // just overwritten so the old row is stale, and the UNIQUE constraint on
+  // r2_key would otherwise reject the insert.
+  const replaced = db
+    .prepare<{ id: string; local_path: string | null }, [string]>(
+      "SELECT id, local_path FROM shared_archives WHERE r2_key = ?"
+    )
+    .all(r2Key);
+  for (const old of replaced) {
+    db.prepare("DELETE FROM shared_archives WHERE id = ?").run(old.id);
+    log("info", `[sharing] admin upload: replaced existing archive ${old.id} (same r2_key)`);
+    // Filesystem cleanup happens after DB is consistent (best-effort)
+    void safeCleanupPending(old.local_path);
+  }
   db.prepare(`
     INSERT INTO shared_archives (id, name_cn, letter, season, sub_group, languages, subtitle_format,
       episode_count, has_fonts, filename, r2_key, file_size, file_count, download_url, status)
@@ -279,22 +330,34 @@ sharing.post("/archives/:id/approve", requireApiKey, async (c) => {
   // Upload to R2
   await r2Upload(r2Key, fileBuf, archiveMimeType(detectArchiveType(fileBuf)), fileBuf.length);
 
-  // Update DB
+  // If a different row already owns this r2_key (e.g. an earlier published
+  // version of the same letter/name/season/filename), drop it so the UNIQUE
+  // constraint on r2_key doesn't block the update. The R2 object was just
+  // overwritten by the upload above so the old row would be stale anyway.
+  const replaced = db
+    .prepare<{ id: string; local_path: string | null }, [string, string]>(
+      "SELECT id, local_path FROM shared_archives WHERE r2_key = ? AND id <> ?"
+    )
+    .all(r2Key, row.id);
+  for (const old of replaced) {
+    db.prepare("DELETE FROM shared_archives WHERE id = ?").run(old.id);
+    log("info", `[sharing] approve: replaced existing archive ${old.id} (same r2_key)`);
+    void safeCleanupPending(old.local_path);
+  }
+
+  // Update DB FIRST so a crash here doesn't orphan a pending row pointing
+  // at a deleted file (race-condition safety).
   db.prepare(`
     UPDATE shared_archives
     SET status = 'published', r2_key = ?, download_url = ?, local_path = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
     WHERE id = ?
   `).run(r2Key, downloadUrl, row.id);
 
-  // Delete local file
-  try {
-    unlinkSync(row.local_path);
-    const dir = resolve(row.local_path, "..");
-    try { rmdirSync(dir); } catch { /* not empty */ }
-  } catch { /* already gone */ }
-
   invalidateCache();
   log("info", `[sharing] approved: ${row.filename} → ${r2Key}`);
+
+  // Best-effort cleanup of the local pending file (happens after DB commit)
+  void safeCleanupPending(row.local_path);
 
   return c.json({ id: row.id, status: "published", download_url: downloadUrl });
 });
@@ -310,21 +373,15 @@ sharing.post("/archives/:id/reject", requireApiKey, (c) => {
 
   if (!row) return c.json({ error: "Archive not found or not pending" }, 404);
 
-  // Delete local file
-  if (row.local_path) {
-    try {
-      if (existsSync(row.local_path)) unlinkSync(row.local_path);
-      const dir = resolve(row.local_path, "..");
-      try { rmdirSync(dir); } catch { /* not empty */ }
-    } catch { /* already gone */ }
-  }
-
+  // DB consistency first, filesystem cleanup after
   db.prepare(
     "UPDATE shared_archives SET status = 'rejected', local_path = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ?"
   ).run(row.id);
 
   invalidateCache();
   log("info", `[sharing] rejected: ${row.id}`);
+
+  void safeCleanupPending(row.local_path);
 
   return c.json({ id: row.id, status: "rejected" });
 });
@@ -345,19 +402,12 @@ sharing.delete("/archives/:id", requireApiKey, async (c) => {
     try { await r2Delete(row.r2_key); } catch (e) { log("warn", `[sharing] R2 delete failed:`, e); }
   }
 
-  // Delete local file if pending
-  if (row.local_path && existsSync(row.local_path)) {
-    try {
-      unlinkSync(row.local_path);
-      const dir = resolve(row.local_path, "..");
-      try { rmdirSync(dir); } catch { /* not empty */ }
-    } catch { /* ok */ }
-  }
-
   db.prepare("DELETE FROM shared_archives WHERE id = ?").run(row.id);
 
   invalidateCache();
   log("info", `[sharing] deleted: ${row.id}`);
+
+  void safeCleanupPending(row.local_path);
 
   return c.json({ deleted: true });
 });
@@ -431,11 +481,15 @@ sharing.get("/archives/:id/preview", requireApiKey, async (c) => {
     const url = buildDownloadUrl(row.r2_key);
     if (url) {
       try {
-        // SSRF protection: ensure URL targets expected R2 host
+        // SSRF protection: ensure URL targets expected R2 host with strict scheme + no userinfo
         const parsedUrl = new URL(url);
-        const expectedHost = new URL(config.r2PublicUrl).host;
-        if (parsedUrl.host !== expectedHost) {
-          log("warn", `[sharing/preview] blocked SSRF: host ${parsedUrl.host} != ${expectedHost}`);
+        const expectedUrl = new URL(config.r2PublicUrl);
+        if (
+          parsedUrl.protocol !== expectedUrl.protocol ||
+          parsedUrl.host !== expectedUrl.host ||
+          parsedUrl.username || parsedUrl.password
+        ) {
+          log("warn", `[sharing/preview] blocked SSRF: ${parsedUrl.protocol}//${parsedUrl.host} != ${expectedUrl.protocol}//${expectedUrl.host}`);
           return c.json({ error: "Invalid archive URL" }, 400);
         }
         const resp = await fetch(url, { signal: AbortSignal.timeout(30_000) });
@@ -514,7 +568,7 @@ sharing.post("/upload-to-existing", requireApiKey, async (c) => {
   }
 
   let languages: string[];
-  try { languages = JSON.parse(languagesStr); } catch { return c.json({ error: "Invalid languages format" }, 400); }
+  try { languages = parseSafeJson(languagesStr); } catch { return c.json({ error: "Invalid languages format" }, 400); }
 
   const buf = Buffer.from(await file.arrayBuffer());
   const { valid, error, fileCount, episodeCount, subtitleFormats } = await validateArchiveContents(buf);
@@ -600,9 +654,9 @@ sharing.post("/contribute", async (c) => {
     contributor?: string;
   };
   try {
-    meta = JSON.parse(metaStr);
-  } catch {
-    return c.json({ error: "Invalid metadata JSON" }, 400);
+    meta = parseSafeJson(metaStr);
+  } catch (e) {
+    return c.json({ error: `Invalid metadata JSON: ${e instanceof Error ? e.message : String(e)}` }, 400);
   }
 
   if (!meta.name_cn || !meta.letter || !meta.season || !meta.sub_group || !meta.languages?.length) {
@@ -758,7 +812,7 @@ sharing.post("/import-index", requireApiKey, (c) => {
               // Download zip and upload to R2
               const zipUrl = `https://raw.githubusercontent.com/Yuri-NagaSaki/AnimeSub/main/${encodedPath}/${season}/${encodeURIComponent(archive.filename)}`;
               try {
-                const zipRes = await fetch(zipUrl, { signal: AbortSignal.timeout(60_000) });
+                const zipRes = await fetch(zipUrl, { signal: AbortSignal.timeout(300_000) });
                 if (!zipRes.ok) {
                   log("warn", `[sharing] zip download failed: ${zipUrl} → ${zipRes.status}`);
                   errors++;

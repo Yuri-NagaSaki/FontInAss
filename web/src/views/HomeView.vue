@@ -1,17 +1,11 @@
 <script setup lang="ts">
-import { ref, onActivated, onDeactivated } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { Cherry, Wand2, Database, Zap } from "lucide-vue-next";
+import { Wand2, Database, Zap } from "lucide-vue-next";
 import KButton from "../components/KButton.vue";
 
 const { t } = useI18n();
 const router = useRouter();
-
-// Pause petal animations when the view is cached but not visible (keep-alive)
-const animationsActive = ref(true);
-onActivated(() => { animationsActive.value = true; });
-onDeactivated(() => { animationsActive.value = false; });
 </script>
 
 <template>
@@ -19,30 +13,24 @@ onDeactivated(() => { animationsActive.value = false; });
 
     <!-- ─── Hero ──────────────────────────────────────────────────────────── -->
     <section class="relative text-center py-16 overflow-hidden">
-      <!-- Background petals (decorative) -->
-      <div class="absolute inset-0 pointer-events-none select-none overflow-hidden" aria-hidden="true">
-        <span class="absolute top-4 left-[8%]  text-5xl opacity-10" :class="animationsActive && 'animate-petal-drift'" style="animation-delay:-1s">🌸</span>
-        <span class="absolute top-12 right-[10%] text-4xl opacity-10" :class="animationsActive && 'animate-petal-drift'" style="animation-delay:-3.5s">🌸</span>
-        <span class="absolute bottom-6 left-[22%] text-3xl opacity-10" :class="animationsActive && 'animate-petal-drift'" style="animation-delay:-2s">🌸</span>
-        <span class="absolute bottom-4 right-[18%] text-5xl opacity-10" :class="animationsActive && 'animate-petal-drift'" style="animation-delay:-4.5s">🌸</span>
+
+      <!-- Wordmark -->
+      <div class="relative inline-block mb-8">
+        <h1 class="font-display font-black text-6xl sm:text-7xl tracking-[-0.035em] leading-[0.9] text-ink-900">
+          FontIn<span class="text-sakura-500">Ass</span>
+        </h1>
+        <span class="absolute -bottom-2 left-1/2 -translate-x-1/2 h-[3px] w-24 rounded-full bg-gradient-to-r from-transparent via-sakura-400 to-transparent" />
       </div>
 
-      <!-- Logo mark -->
-      <div class="relative inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-gradient-to-br from-sakura-300 to-sakura-500 shadow-[var(--shadow-lg)] mb-6">
-        <Cherry class="w-10 h-10 text-white" :stroke-width="1.8" />
-        <!-- Shimmer ring -->
-        <div class="absolute inset-0 rounded-3xl ring-2 ring-sakura-300/40 ring-offset-2 ring-offset-white/0" />
-      </div>
-
-      <h1 class="font-display font-bold text-4xl sm:text-5xl text-ink-950 mb-4 leading-tight">
+      <h2 class="font-display font-bold text-3xl sm:text-4xl text-ink-950 mb-4 leading-tight">
         {{ t('heroTitle') }}
-      </h1>
+      </h2>
       <p class="text-lg text-ink-500 max-w-lg mx-auto leading-relaxed mb-8">
         {{ t('heroDesc') }}
       </p>
       <div class="flex items-center justify-center gap-3">
         <KButton variant="primary" size="lg" @click="router.push('/subset')">
-          <Cherry class="w-5 h-5" />
+          <span class="text-lg leading-none">🌸</span>
           {{ t('heroAction') }}
         </KButton>
       </div>

@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
 import {
   FileArchive, Check, X, Eye, Pencil,
-  Loader2, Clock, User, Folder, AlertTriangle, Save,
+  Loader2, Clock, User, Folder, AlertTriangle, Save, FolderTree,
 } from "lucide-vue-next";
 import KBadge from "./KBadge.vue";
 import { previewArchive, editArchive } from "../api/client";
 import type { SharedArchive } from "../api/client";
 import { formatBytes } from "../lib/format";
+import { useConfirm } from "../composables/useConfirm";
 
 const { t } = useI18n();
 
@@ -143,11 +143,10 @@ async function saveEdit() {
       languages: editForm.value.languages,
       has_fonts: editForm.value.has_fonts,
     });
-    toast.success(t("sharingEditSuccess"));
     editExpanded.value = false;
     emit("updated");
   } catch (e: any) {
-    toast.error(e?.message || String(e));
+    useConfirm().alert({ title: t('errorTitle'), message: e?.message || String(e), variant: 'danger' });
   } finally {
     editSaving.value = false;
   }
@@ -218,6 +217,19 @@ async function saveEdit() {
           <span class="inline-flex items-center gap-1 truncate max-w-[260px]" :title="archive.filename">
             {{ archive.filename }}
           </span>
+        </div>
+
+        <!-- Target storage path -->
+        <div class="flex items-center gap-1.5 mt-2 px-2.5 py-1.5 rounded-lg bg-sky-50/70 border border-sky-100 text-[11px] text-sky-700 font-mono break-all">
+          <FolderTree class="w-3.5 h-3.5 shrink-0 text-sky-500" />
+          <span class="text-ink-400 mr-1 font-sans">{{ t('sharingTargetPath') }}:</span>
+          <span class="font-semibold">{{ archive.letter }}</span>
+          <span class="text-ink-300">/</span>
+          <span>{{ archive.name_cn }}</span>
+          <span class="text-ink-300">/</span>
+          <span>{{ archive.season }}</span>
+          <span class="text-ink-300">/</span>
+          <span class="text-ink-500">{{ archive.filename }}</span>
         </div>
       </div>
 

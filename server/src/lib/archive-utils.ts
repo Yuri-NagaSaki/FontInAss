@@ -108,6 +108,8 @@ async function extract7zFilenames(buf: Buffer): Promise<string[]> {
     // File entry blocks have both "Path = " and "Size = " lines.
     const names: string[] = [];
     const blocks = stdout.split(/\n\n+/);
+    const MAX_UNCOMPRESSED = config.archiveMaxUncompressed;
+    let totalUncompressed = 0;
     for (const block of blocks) {
       const lines = block.split("\n").map(l => l.trim());
       const pathLine = lines.find(l => l.startsWith("Path = "));
@@ -116,6 +118,13 @@ async function extract7zFilenames(buf: Buffer): Promise<string[]> {
       if (!pathLine || !sizeLine) continue; // skip archive header (no Size line)
       const isFolder = folderLine?.endsWith("= +");
       if (isFolder) continue;
+      const sz = Number(sizeLine.slice("Size = ".length).trim());
+      if (Number.isFinite(sz) && sz > 0) {
+        totalUncompressed += sz;
+        if (totalUncompressed > MAX_UNCOMPRESSED) {
+          throw new Error("7z uncompressed size exceeds limit (possible 7z bomb)");
+        }
+      }
       const name = pathLine.slice("Path = ".length);
       if (name && !name.includes("..")) names.push(name);
     }

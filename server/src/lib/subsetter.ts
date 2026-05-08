@@ -107,16 +107,18 @@ export function subsetParsedFont(
       seen.add(cp);
     }
 
-    const getName = (id: string | number) => {
-      const entry = (orig.tables?.name as Record<string, Record<string, string>> | null)?.[id as string];
+    // Pick a sensible ASCII family/style for the constructor — opentype.js uses these
+    // to build a default postScriptName (which must be ASCII per spec).
+    const origNames = (orig as unknown as { names?: Record<string, Record<string, string>> }).names ?? {};
+    const pickName = (id: string): string | null => {
+      const entry = origNames[id];
       if (!entry) return null;
-      return entry["en"] ?? entry["en-US"] ?? Object.values(entry)[0] ?? null;
+      return entry["en"] ?? entry["en-US"] ?? Object.values(entry).find(v => /^[\x20-\x7E]+$/.test(v)) ?? Object.values(entry)[0] ?? null;
     };
 
-    const familyName = (getName("fontFamily") as string | null) ?? fontName;
-    const styleName = (getName("fontSubfamily") as string | null) ?? "Regular";
+    const familyName = pickName("fontFamily") ?? fontName;
+    const styleName = pickName("fontSubfamily") ?? "Regular";
     const os2Table = orig.tables?.os2 ? { ...orig.tables.os2 as Record<string, unknown> } : null;
-    const nameTable = orig.tables?.name ?? null;
 
     const newFont = new opentype.Font({
       familyName,
@@ -127,7 +129,46 @@ export function subsetParsedFont(
       glyphs,
     });
 
-    if (nameTable) newFont.tables.name = nameTable;
+    // CRITICAL: opentype.js serializes the name table from `font.names`, NOT from
+    // `font.tables.name` (see opentype.js src/tables/sfnt.js). The Font constructor
+    // only sets English (en) records derived from familyName/styleName, which means
+    // CJK family names (e.g. `方正准雅宋`, nameID 1 zh-Hans) are dropped from the
+    // subsetted output. libass matches `\fnXxx` against name table records, so without
+    // the original multilingual entries the font becomes unmatchable inside MKV.
+    // Deep-copy the parsed `names` structure so all language/platform variants survive.
+    if (Object.keys(origNames).length > 0) {
+      const merged = JSON.parse(JSON.stringify(origNames)) as Record<string, Record<string, string>>;
+      // Ensure required entries exist for sfnt writer; fall back to constructor defaults.
+      const newNames = (newFont as unknown as { names: Record<string, Record<string, string>> }).names;
+      for (const key of ["fontFamily", "fontSubfamily", "fullName", "postScriptName"]) {
+        if (!merged[key] || Object.keys(merged[key]).length === 0) {
+          merged[key] = newNames[key] ? { ...newNames[key] } : {};
+        }
+        // sfnt writer + CFF table read `font.getEnglishName(key)` which returns
+        // `names[key].en` directly. For CJK-only fonts that lack an English entry
+        // this would yield `undefined`, producing broken CFF strings ("undefined
+        // undefined") and an invalid postScriptName. Seed `en` from the constructor
+        // defaults (derived from ASCII familyName/styleName) when missing.
+        if (!merged[key].en) {
+          const fallback =
+            newNames[key]?.en ??
+            merged[key]["en-US"] ??
+            Object.values(merged[key]).find(v => /^[\x20-\x7E]+$/.test(v)) ??
+            Object.values(merged[key])[0];
+          if (fallback) merged[key].en = fallback;
+        }
+      }
+      // postScriptName must be ASCII and contain no whitespace; sanitize each entry.
+      if (merged.postScriptName) {
+        for (const lang of Object.keys(merged.postScriptName)) {
+          const v = merged.postScriptName[lang];
+          if (!/^[\x20-\x7E]+$/.test(v) || /\s/.test(v)) {
+            merged.postScriptName[lang] = (familyName + styleName).replace(/\s/g, "").replace(/[^\x20-\x7E]/g, "");
+          }
+        }
+      }
+      (newFont as unknown as { names: Record<string, Record<string, string>> }).names = merged;
+    }
     if (os2Table) newFont.tables.os2 = os2Table;
 
     const subsetBytes = new Uint8Array(newFont.toArrayBuffer());
@@ -135,9 +176,17 @@ export function subsetParsedFont(
 
     const bTag = weight > 400 ? "B" : "";
     const iTag = italic ? "I" : "";
+    // Sanitize fontName for inclusion in the [Fonts] section header. Newlines,
+    // carriage returns and `:` would terminate the `fontname:` line or split it
+    // into a malformed entry that libass / mux tools reject. Strip control chars
+    // and `:`; collapse internal whitespace runs.
+    const safeFontName = fontName
+      .replace(/[\x00-\x1F\x7F:]/g, "")
+      .replace(/\s+/g, " ")
+      .trim() || "font";
     // opentype.js always outputs CFF/OTF format (OTTO magic bytes) — use .otf extension
     // so tools like mkvtoolnix correctly identify the attachment format.
-    const header = `fontname:${fontName}_${bTag}${iTag}0.otf\n`;
+    const header = `fontname:${safeFontName}_${bTag}${iTag}0.otf\n`;
 
     // Filter characters commonly absent from fonts and not worth warning about
     const SUPPRESS_RANGES: Array<[number, number]> = [

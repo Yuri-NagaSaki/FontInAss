@@ -20,6 +20,7 @@ import uploadRoute from "./routes/upload.js";
 import apiUploadRoute from "./routes/api-upload.js";
 import apiTokensRoute from "./routes/api-tokens.js";
 import { startScheduler, stopScheduler } from "./lib/scheduler.js";
+import { repairUnnamedFonts } from "./lib/font-manager.js";
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -151,6 +152,12 @@ log("info", `API key: ${config.apiKey ? "configured" : "NONE (open access)"}`);
 
 // Start periodic auto-index + auto-dedup scheduler
 startScheduler();
+
+// Repair any uploads that landed in DB without a name index — e.g. fonts
+// uploaded while opentype.js 1.3.5 was returning a platform-nested name table
+// that the previous getNames() couldn't read. Runs once per process start;
+// no-ops when nothing is broken.
+repairUnnamedFonts().catch(e => log("warn", "[repair] failed:", e));
 
 // ─── Graceful shutdown ────────────────────────────────────────────────────────
 

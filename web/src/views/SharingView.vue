@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
 import { useDebounceFn } from "@vueuse/core";
 import {
   Search, X, Tv,
@@ -237,7 +236,7 @@ async function downloadFile(archive: SharedArchive) {
     a.click();
     URL.revokeObjectURL(url);
   } catch (e: any) {
-    toast.error(e.message || String(e));
+    useConfirm().alert({ title: t('errorTitle'), message: e.message || String(e), variant: 'danger' });
   } finally {
     downloadingId.value = "";
   }
@@ -257,10 +256,9 @@ async function confirmDelete(archive: SharedArchive) {
   if (!ok) return;
   try {
     await deleteArchive(archive.id);
-    toast.success(t("sharingDeleteSuccess"));
     await loadArchives();
   } catch (e: any) {
-    toast.error(e.message || String(e));
+    useConfirm().alert({ title: t('errorTitle'), message: e.message || String(e), variant: 'danger' });
   }
 }
 

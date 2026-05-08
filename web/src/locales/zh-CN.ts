@@ -40,6 +40,10 @@ export default {
   deleteFontsConfirm: "确定要删除选中的 {n} 个字体吗？此操作不可撤销。",
   cancel: "取消",
   confirm: "确认",
+  ok: "好的",
+  errorTitle: "出错了",
+  sharingTargetPath: "目标路径",
+  sharingTargetPathHint: "审核通过后会保存到此路径下。Letter 留空将根据中文名首字母自动生成（非英文字母归到 # 文件夹）。",
   // Lock screen
   lockScreenTitle: "需要 API Key",
   lockScreenDesc: "字体管理页受保护，请输入 API Key 以继续。",

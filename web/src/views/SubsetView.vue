@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onBeforeUnmount } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
 import { copyToClipboard } from "../lib/clipboard";
 import {
-  Cherry, Download, Trash2, RotateCcw,
+  Download, Trash2, RotateCcw,
   CheckCircle2, XCircle, Loader2, FileText, Copy, X, AlertTriangle, Info,
 } from "lucide-vue-next";
 import { subsetFile } from "../api/client";
@@ -13,6 +12,7 @@ import KButton from "../components/KButton.vue";
 import KBadge from "../components/KBadge.vue";
 import KEmpty from "../components/KEmpty.vue";
 import { useSettings } from "../composables/useSettings";
+import { useConfirm } from "../composables/useConfirm";
 
 const { t } = useI18n();
 
@@ -186,7 +186,7 @@ onBeforeUnmount(() => {
 const copiedKeys = ref(new Set<string>());
 
 const copyMsg = (text: string, key?: string) => {
-  if (!copyToClipboard(text)) { toast.error(t("copyFail")); return; }
+  if (!copyToClipboard(text)) { useConfirm().alert({ title: t('errorTitle'), message: t('copyFail'), variant: 'danger' }); return; }
   if (key) {
     copiedKeys.value = new Set([...copiedKeys.value, key]);
     setTimeout(() => {
@@ -281,7 +281,7 @@ const summaryText = (entry: FileEntry) => {
       class="fixed inset-0 z-50 pointer-events-none flex items-center justify-center bg-surface/60 backdrop-blur-sm"
     >
       <div class="drop-zone w-64 h-40 flex flex-col items-center justify-center gap-3 pointer-events-none">
-        <Cherry class="w-10 h-10 text-sakura-400" />
+        <span class="text-5xl leading-none">🌸</span>
         <p class="font-medium text-sakura-500">{{ t("dropHere") }}</p>
       </div>
     </div>
@@ -295,10 +295,8 @@ const summaryText = (entry: FileEntry) => {
       :class="dragActive ? 'ring-2 ring-sakura-400 scale-[1.01]' : ''"
       @click="onClickUpload"
     >
-      <div class="absolute top-4 right-6 opacity-30 pointer-events-none select-none text-3xl">🌸</div>
-      <div class="absolute bottom-4 left-8 opacity-20 pointer-events-none select-none text-xl">🌸</div>
       <div class="w-16 h-16 rounded-2xl bg-sakura-50 flex items-center justify-center">
-        <Cherry class="w-8 h-8 text-sakura-400" :stroke-width="1.5" />
+        <span class="text-3xl leading-none">🌸</span>
       </div>
       <div class="text-center space-y-1">
         <p class="font-display font-semibold text-ink-900 text-lg">{{ t("dropZoneTitle") }}</p>

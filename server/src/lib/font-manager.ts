@@ -191,14 +191,31 @@ function parseSingleFace(buf: ArrayBuffer, opts?: { lowMemory?: boolean }): open
 
 function getNames(font: opentype.Font): string[] {
   const names = new Set<string>();
-  const nameTable = font.tables?.name as Record<string, Record<string, string>> | undefined;
+  const nameTable = font.tables?.name as Record<string, unknown> | undefined;
   if (!nameTable) return [];
 
-  for (const field of ["fontFamily", "preferredFamily", "fullName"] as const) {
-    const entry = nameTable[field];
-    if (entry) {
-      for (const val of Object.values(entry)) {
-        if (val && typeof val === "string") names.add(val.trim());
+  // opentype.js 1.3.4 exposes a flat shape:
+  //   { fontFamily: { en: "Arial" }, preferredFamily: {...}, ... }
+  // opentype.js 1.3.5 nests by platform:
+  //   { windows: { fontFamily: { en: "Arial" }, ... }, macintosh: { ... } }
+  // Handle both so a runtime upgrade doesn't silently break indexing.
+  const candidateBuckets: Array<Record<string, Record<string, string>>> = [];
+  for (const platform of ["windows", "macintosh", "unicode"] as const) {
+    const bucket = nameTable[platform];
+    if (bucket && typeof bucket === "object") {
+      candidateBuckets.push(bucket as Record<string, Record<string, string>>);
+    }
+  }
+  // Always include the flat shape too (1.3.4 + opentype.js fallback)
+  candidateBuckets.push(nameTable as Record<string, Record<string, string>>);
+
+  for (const bucket of candidateBuckets) {
+    for (const field of ["fontFamily", "preferredFamily", "fullName"] as const) {
+      const entry = bucket[field];
+      if (entry && typeof entry === "object") {
+        for (const val of Object.values(entry)) {
+          if (val && typeof val === "string") names.add(val.trim());
+        }
       }
     }
   }
@@ -386,4 +403,67 @@ export async function indexFont(
   runBatch(stmts);
 
   return { filename, id: fileId, faces: faces.length };
+}
+
+/**
+ * One-shot repair: re-index any font_files rows that have no usable font_names
+ * link. This is needed after the opentype.js 1.3.5 regression silently produced
+ * empty `familyNames` for uploads, leaving rows in `font_files` (+ possibly
+ * `font_info`) but no `font_names` for lookup. Safe to run repeatedly.
+ */
+export async function repairUnnamedFonts(): Promise<{ attempted: number; repaired: number; failed: number }> {
+  const db = getDb();
+  const broken = db.prepare<{ id: string; r2_key: string; filename: string }, []>(`
+    SELECT ff.id, ff.r2_key, ff.filename
+    FROM font_files ff
+    WHERE NOT EXISTS (
+      SELECT 1 FROM font_info fi
+      JOIN font_names fn ON fn.font_info_id = fi.id
+      WHERE fi.file_id = ff.id
+    )
+  `).all();
+
+  if (broken.length === 0) return { attempted: 0, repaired: 0, failed: 0 };
+
+  log("info", `[repair] Found ${broken.length} font_files with no name index — re-parsing`);
+  let repaired = 0;
+  let failed = 0;
+
+  for (const row of broken) {
+    try {
+      const bytes = await getFile(row.r2_key);
+      if (!bytes) { failed++; continue; }
+      const faces = parseFontMetadata(bytes);
+      if (faces.length === 0 || faces.every(f => f.familyNames.length === 0)) {
+        log("warn", `[repair] ${row.filename}: still no names after re-parse`);
+        failed++;
+        continue;
+      }
+      const stmts: { sql: string; params: unknown[] }[] = [];
+      // Drop any previously-inserted font_info rows so we can reinsert cleanly.
+      // font_names rows are only attached to the new font_info ids we generate.
+      stmts.push({ sql: "DELETE FROM font_info WHERE file_id = ?", params: [row.id] });
+      for (const face of faces) {
+        const faceId = crypto.randomUUID();
+        stmts.push({
+          sql: "INSERT OR IGNORE INTO font_info (id, file_id, font_index, weight, bold, italic) VALUES (?, ?, ?, ?, ?, ?)",
+          params: [faceId, row.id, face.index, face.weight, face.bold ? 1 : 0, face.italic ? 1 : 0],
+        });
+        for (const name of face.familyNames) {
+          stmts.push({
+            sql: "INSERT OR IGNORE INTO font_names (name_lower, font_info_id) VALUES (?, ?)",
+            params: [name.toLowerCase(), faceId],
+          });
+        }
+      }
+      runBatch(stmts);
+      repaired++;
+    } catch (e) {
+      log("warn", `[repair] ${row.filename}: ${e instanceof Error ? e.message : String(e)}`);
+      failed++;
+    }
+  }
+
+  log("info", `[repair] Done: ${repaired}/${broken.length} repaired, ${failed} failed`);
+  return { attempted: broken.length, repaired, failed };
 }

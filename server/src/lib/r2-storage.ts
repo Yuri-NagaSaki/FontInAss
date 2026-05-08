@@ -23,7 +23,12 @@ function getClient(): AwsClient {
 }
 
 function endpoint(key: string): string {
-  return `https://${config.r2AccountId}.r2.cloudflarestorage.com/${config.r2BucketName}/${key}`;
+  // Each path segment must be percent-encoded so characters like `#`, `?`,
+  // spaces, `[`, `]` and non-ASCII (CJK) don't get reinterpreted by the URL
+  // parser (e.g. `#` becoming a fragment, `?` introducing a query). When the
+  // path is mis-parsed R2 sees a bucket-level request and returns MalformedXML.
+  const encoded = key.split("/").map(encodeURIComponent).join("/");
+  return `https://${config.r2AccountId}.r2.cloudflarestorage.com/${config.r2BucketName}/${encoded}`;
 }
 
 /** Check if R2 is configured (all required env vars present). */

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
 import { RefreshCcw, KeyRound, AlertTriangle, Database } from "lucide-vue-next";
 import { browseR2, indexR2Keys, listR2Keys } from "../api/client";
 import type { BrowseFile } from "../api/client";
@@ -10,6 +9,7 @@ import KSpinner from "./KSpinner.vue";
 import KEmpty from "./KEmpty.vue";
 import R2NodeRow from "./R2NodeRow.vue";
 import { useIndexState } from "../composables/useIndexState";
+import { useConfirm } from "../composables/useConfirm";
 import type { R2Node } from "../types";
 
 const { t } = useI18n();
@@ -76,7 +76,7 @@ const toggleFolder = async (node: R2Node) => {
     node.hasMore = hasMore;
     node.fileCount = files.length;
   } catch {
-    toast.error(t("browseFailed"));
+    useConfirm().alert({ title: t('errorTitle'), message: t('browseFailed'), variant: 'danger' });
     node.expanded = false;
   } finally {
     node.loading = false;
@@ -113,7 +113,7 @@ const indexSingleFile = async (node: R2Node) => {
     node.indexed = true;
     emit("changed");
   } catch {
-    toast.error(t("indexFailed"));
+    useConfirm().alert({ title: t('errorTitle'), message: t('indexFailed'), variant: 'danger' });
   }
 };
 
@@ -164,7 +164,7 @@ const indexAllUnder = async (prefix: string) => {
     emit("changed");
     loadRoot();
   } catch {
-    toast.error(t("indexFailed"));
+    useConfirm().alert({ title: t('errorTitle'), message: t('indexFailed'), variant: 'danger' });
     prog.phase = "done";
   } finally {
     prog.active = false;

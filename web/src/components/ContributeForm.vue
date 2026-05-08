@@ -3,7 +3,7 @@ import { ref, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   ArrowLeft, CheckCircle2, AlertCircle, CloudUpload,
-  Tv, Upload, FileArchive,
+  Tv, Upload, FileArchive, FolderTree,
 } from "lucide-vue-next";
 import KButton from "./KButton.vue";
 import KBadge from "./KBadge.vue";
@@ -52,6 +52,21 @@ const canSubmit = computed(() =>
   uploadFile.value !== null &&
   !uploadSubmitting.value
 );
+
+const targetPath = computed(() => {
+  const name = uploadForm.value.name_cn.trim();
+  let letter = uploadForm.value.letter.trim().toUpperCase();
+  if (!letter && name) {
+    const first = name.charAt(0).toUpperCase();
+    letter = /[A-Z]/.test(first) ? first : "#";
+  }
+  return {
+    letter: letter || "?",
+    name: name || "—",
+    season: uploadForm.value.season || "S1",
+    file: uploadFile.value?.name || "—",
+  };
+});
 
 function toggleLang(lang: string) {
   const idx = uploadForm.value.languages.indexOf(lang);
@@ -431,6 +446,26 @@ function handleClose() {
                 </button>
               </template>
               <input ref="contribFileInput" type="file" accept=".zip,.7z" class="hidden" @change="handleFileSelect($event)" />
+            </div>
+          </div>
+
+          <!-- Target path preview -->
+          <div class="card p-4 bg-sky-50/40 border-sky-100">
+            <div class="flex items-start gap-2">
+              <FolderTree class="w-4 h-4 mt-0.5 text-sky-500 shrink-0" />
+              <div class="min-w-0 flex-1">
+                <div class="text-[11px] font-semibold text-sky-700 mb-1">{{ t('sharingTargetPath') }}</div>
+                <div class="font-mono text-xs text-ink-700 break-all leading-relaxed">
+                  <span class="font-bold text-sky-600">{{ targetPath.letter }}</span>
+                  <span class="text-ink-300"> / </span>
+                  <span>{{ targetPath.name }}</span>
+                  <span class="text-ink-300"> / </span>
+                  <span>{{ targetPath.season }}</span>
+                  <span class="text-ink-300"> / </span>
+                  <span class="text-ink-500">{{ targetPath.file }}</span>
+                </div>
+                <p class="text-[10px] text-ink-400 mt-1.5 leading-relaxed">{{ t('sharingTargetPathHint') }}</p>
+              </div>
             </div>
           </div>
 

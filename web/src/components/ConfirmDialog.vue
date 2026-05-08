@@ -23,7 +23,7 @@ function onConfirm() { _resolve(true); }
 
 function onKey(e: KeyboardEvent) {
   if (!state.value.open) return;
-  if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+  if (e.key === "Escape") { e.preventDefault(); state.value.alertOnly ? onConfirm() : onCancel(); }
   if (e.key === "Enter")  { e.preventDefault(); onConfirm(); }
 }
 
@@ -81,11 +81,11 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey));
             </div>
 
             <div class="px-6 py-4 bg-ink-50/50 border-t border-ink-100 flex items-center justify-end gap-2">
-              <KButton variant="ghost" size="sm" @click="onCancel">
+              <KButton v-if="!state.alertOnly" variant="ghost" size="sm" @click="onCancel">
                 {{ state.cancelText || t('cancel') }}
               </KButton>
               <KButton :variant="accent.btn" size="sm" @click="onConfirm">
-                {{ state.confirmText || t('confirm') }}
+                {{ state.confirmText || (state.alertOnly ? t('ok') : t('confirm')) }}
               </KButton>
             </div>
           </div>

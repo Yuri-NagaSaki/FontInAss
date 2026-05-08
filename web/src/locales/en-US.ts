@@ -40,6 +40,10 @@ export default {
   deleteFontsConfirm: "Delete {n} selected font(s)? This cannot be undone.",
   cancel: "Cancel",
   confirm: "Confirm",
+  ok: "OK",
+  errorTitle: "Something went wrong",
+  sharingTargetPath: "Target path",
+  sharingTargetPathHint: "After approval the archive is stored at this path. Leave Letter empty to auto-derive from the first character of the name (non-Latin names land under #).",
   // Lock screen
   lockScreenTitle: "API Key Required",
   lockScreenDesc: "Font management is protected. Enter your API Key to continue.",

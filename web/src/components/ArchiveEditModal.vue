@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { toast } from "vue-sonner";
 import { X } from "lucide-vue-next";
 import KButton from "./KButton.vue";
+import { useConfirm } from "../composables/useConfirm";
 import type { SharedArchive } from "../api/client";
 import { editArchive } from "../api/client";
 
@@ -51,11 +51,10 @@ async function submit() {
   editSubmitting.value = true;
   try {
     await editArchive(props.archive.id, editForm.value);
-    toast.success(t("sharingEditSuccess"));
     close();
     emit("saved");
   } catch (e: any) {
-    toast.error(e.message || String(e));
+    useConfirm().alert({ title: t('errorTitle'), message: e.message || String(e), variant: 'danger' });
   } finally {
     editSubmitting.value = false;
   }
