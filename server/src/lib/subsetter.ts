@@ -24,6 +24,109 @@ function toArrayBuffer(fontBytes: Uint8Array): ArrayBuffer {
     : fontBytes.buffer.slice(fontBytes.byteOffset, fontBytes.byteOffset + fontBytes.byteLength) as ArrayBuffer;
 }
 
+type FontNames = Record<string, Record<string, string>>;
+
+const NAME_TABLE_FIELDS = new Set([
+  "copyright",
+  "fontFamily",
+  "fontSubfamily",
+  "uniqueID",
+  "fullName",
+  "version",
+  "postScriptName",
+  "trademark",
+  "manufacturer",
+  "designer",
+  "description",
+  "manufacturerURL",
+  "designerURL",
+  "license",
+  "licenseURL",
+  "reserved",
+  "preferredFamily",
+  "preferredSubfamily",
+  "compatibleFullName",
+  "sampleText",
+  "postScriptFindFontName",
+  "wwsFamily",
+  "wwsSubfamily",
+]);
+
+function addName(names: FontNames, field: string, lang: string, value: unknown): void {
+  if (!NAME_TABLE_FIELDS.has(field) || typeof value !== "string" || value.length === 0) return;
+  const entry = names[field] ?? {};
+  entry[lang] = value;
+  names[field] = entry;
+}
+
+function addNameBucket(names: FontNames, bucket: unknown): void {
+  if (!bucket || typeof bucket !== "object") return;
+  for (const [field, translations] of Object.entries(bucket as Record<string, unknown>)) {
+    if (!NAME_TABLE_FIELDS.has(field) || !translations || typeof translations !== "object") continue;
+    for (const [lang, value] of Object.entries(translations as Record<string, unknown>)) {
+      addName(names, field, lang, value);
+    }
+  }
+}
+
+function normalizeFontNames(rawNames: unknown): FontNames {
+  const names: FontNames = {};
+  if (!rawNames || typeof rawNames !== "object") return names;
+  const raw = rawNames as Record<string, unknown>;
+
+  // opentype.js 1.3.4 exposes a flat name table:
+  //   { fontFamily: { en: "...", zh: "..." }, ... }
+  addNameBucket(names, raw);
+
+  // opentype.js 1.3.5 exposes names grouped by platform:
+  //   { macintosh: { fontFamily: {...} }, windows: { ... } }
+  // Apply Windows last because it usually has the correct Unicode CJK records.
+  for (const platform of ["unicode", "macintosh", "windows"]) {
+    addNameBucket(names, raw[platform]);
+  }
+
+  // Be defensive for language-first shapes if a runtime changes again:
+  //   { en: { fontFamily: "...", ... }, zh: { ... } }
+  for (const [lang, fields] of Object.entries(raw)) {
+    if (!fields || typeof fields !== "object" || NAME_TABLE_FIELDS.has(lang)) continue;
+    for (const [field, value] of Object.entries(fields as Record<string, unknown>)) {
+      addName(names, field, lang, value);
+    }
+  }
+
+  return names;
+}
+
+function mergeFontNames(base: FontNames, override: FontNames): FontNames {
+  const merged = JSON.parse(JSON.stringify(base)) as FontNames;
+  for (const [field, translations] of Object.entries(override)) {
+    merged[field] = {
+      ...(merged[field] ?? {}),
+      ...translations,
+    };
+  }
+  return merged;
+}
+
+function usesPlatformNameBuckets(rawNames: unknown): boolean {
+  if (!rawNames || typeof rawNames !== "object") return false;
+  const raw = rawNames as Record<string, unknown>;
+  return ["unicode", "macintosh", "windows"].some(platform =>
+    raw[platform] && typeof raw[platform] === "object"
+  );
+}
+
+function formatNamesForWriter(names: FontNames, writerTemplate: unknown): unknown {
+  if (!usesPlatformNameBuckets(writerTemplate)) return names;
+
+  const template = writerTemplate as Record<string, unknown>;
+  const result: Record<string, FontNames> = {};
+  for (const platform of ["unicode", "macintosh", "windows"]) {
+    result[platform] = mergeFontNames(normalizeFontNames(template[platform]), names);
+  }
+  return result;
+}
+
 export function parseFontFace(fontBytes: Uint8Array, faceIndex: number): opentype.Font {
   const buf = toArrayBuffer(fontBytes);
   return isTTC(fontBytes)
@@ -111,7 +214,7 @@ export function subsetParsedFont(
 
     // Pick a sensible ASCII family/style for the constructor — opentype.js uses these
     // to build a default postScriptName (which must be ASCII per spec).
-    const origNames = (orig as unknown as { names?: Record<string, Record<string, string>> }).names ?? {};
+    const origNames = normalizeFontNames((orig as unknown as { names?: unknown }).names);
     const pickName = (id: string): string | null => {
       const entry = origNames[id];
       if (!entry) return null;
@@ -143,7 +246,8 @@ export function subsetParsedFont(
     if (Object.keys(origNames).length > 0) {
       const merged = JSON.parse(JSON.stringify(origNames)) as Record<string, Record<string, string>>;
       // Ensure required entries exist for sfnt writer; fall back to constructor defaults.
-      const newNames = (newFont as unknown as { names: Record<string, Record<string, string>> }).names;
+      const rawNewNames = (newFont as unknown as { names: unknown }).names;
+      const newNames = normalizeFontNames(rawNewNames);
       for (const key of ["fontFamily", "fontSubfamily", "fullName", "postScriptName"]) {
         if (!merged[key] || Object.keys(merged[key]).length === 0) {
           merged[key] = newNames[key] ? { ...newNames[key] } : {};
@@ -203,7 +307,7 @@ export function subsetParsedFont(
           }
         }
       }
-      (newFont as unknown as { names: Record<string, Record<string, string>> }).names = merged;
+      (newFont as unknown as { names: unknown }).names = formatNamesForWriter(merged, rawNewNames);
     }
     if (os2Table) newFont.tables.os2 = os2Table;
 
