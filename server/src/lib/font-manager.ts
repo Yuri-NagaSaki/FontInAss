@@ -62,7 +62,11 @@ function pickBest(
   const targetBold = targetWeight >= 600 ? 1 : 0;
   const italicInt = targetItalic ? 1 : 0;
 
-  const exact = variants.find(v => v.bold === targetBold && v.italic === italicInt);
+  const exact = variants.find(v =>
+    v.weight === targetWeight &&
+    v.bold === targetBold &&
+    v.italic === italicInt
+  );
   const best = exact ?? [...variants].sort((a, b) => {
     const score = (v: FontLookupRow) =>
       Math.abs(v.bold - targetBold) * 200 +

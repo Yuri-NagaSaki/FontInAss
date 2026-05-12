@@ -7,6 +7,9 @@ import {
   srtToAss,
   removeSection,
   checkFontsSection,
+  removeFontSubsetComments,
+  renameAssFonts,
+  insertFontSubsetComments,
 } from "../lib/ass-parser.js";
 import { lookupFontsBatch, loadFontBytes, type FontLookupResult } from "../lib/font-manager.js";
 import { parseFontFace, subsetParsedFont } from "../lib/subsetter.js";
@@ -181,6 +184,24 @@ interface ProcessResult {
   data: Uint8Array | null;
 }
 
+function makeSubsetAlias(originalName: string, used: Set<string>): string {
+  let salt = 0;
+  while (true) {
+    const hash = createHash("sha1")
+      .update(originalName)
+      .update("\0")
+      .update(String(salt))
+      .digest("hex")
+      .toUpperCase();
+    const alias = `F${hash.slice(0, 7)}`;
+    if (!used.has(alias)) {
+      used.add(alias);
+      return alias;
+    }
+    salt++;
+  }
+}
+
 async function processSubtitle(
   filename: string,
   rawBytes: Uint8Array,
@@ -271,10 +292,21 @@ async function processSubtitle(
         `$1${originalName}`,
       );
     }
+    text = removeFontSubsetComments(text);
     log("debug", `[subset:${filename}] restored ${Object.keys(subRename).length} subset-renamed font(s)`);
   }
 
   const fontEntries = Object.entries(fontCharMap);
+  const displayName = (nameLower: string) => originalNames[nameLower] ?? nameLower;
+  const usedSubsetAliases = new Set<string>();
+  const subsetAliasByNameLower = new Map<string, string>();
+  for (const [key] of fontEntries) {
+    const [nameLower] = key.split("|");
+    if (!subsetAliasByNameLower.has(nameLower)) {
+      subsetAliasByNameLower.set(nameLower, makeSubsetAlias(displayName(nameLower), usedSubsetAliases));
+    }
+  }
+
   log("debug", `[subset:${filename}] found ${fontEntries.length} font(s): ${
     fontEntries.map(([k, v]) => {
       const [name] = k.split("|");
@@ -285,8 +317,6 @@ async function processSubtitle(
   if (fontEntries.length === 0) {
     return { code: CODE.CLIENT_ERROR, messages: ["No fonts referenced in subtitle"], data: null };
   }
-
-  const displayName = (nameLower: string) => originalNames[nameLower] ?? nameLower;
 
   const lookupReqs = fontEntries.map(([key]) => {
     const [nameLower, weightStr, italicStr] = key.split("|");
@@ -387,7 +417,8 @@ async function processSubtitle(
       for (const { key, unicodeSet, nameLower, weight, italic } of faceVariants) {
         const tSub = Date.now();
         const fontDisplayName = originalNames[nameLower] ?? nameLower;
-        const result = subsetParsedFont(parsedFont, fontDisplayName, weight, italic, unicodeSet);
+        const subsetAlias = subsetAliasByNameLower.get(nameLower) ?? fontDisplayName;
+        const result = subsetParsedFont(parsedFont, fontDisplayName, weight, italic, unicodeSet, subsetAlias);
         log("debug", `[subset:${filename}]   subsetted "${displayName(nameLower)}" in ${Date.now()-tSub}ms → ${result.encoded.length} encoded chars${result.error ? ` ERROR: ${result.error}` : ""}${result.missingGlyphs ? ` MISSING: ${result.missingGlyphs}` : ""}`);
         subsetResultMap.set(key, result);
       }
@@ -397,6 +428,7 @@ async function processSubtitle(
 
   let fontsSection = "[Fonts]\n";
   const errors: string[] = [];
+  const successfulFontNames = new Set<string>();
 
   // Reassemble in original order
   for (const [key] of fontEntries) {
@@ -406,8 +438,9 @@ async function processSubtitle(
       errors.push(res.error);
     } else {
       fontsSection += res.encoded;
+      const [nameLower] = key.split("|");
+      successfulFontNames.add(nameLower);
       if (res.missingGlyphs) {
-        const [nameLower] = key.split("|");
         errors.push(`Missing glyphs in [${displayName(nameLower)}]: ${res.missingGlyphs}`);
       }
     }
@@ -418,7 +451,25 @@ async function processSubtitle(
     return { code: CODE.CLIENT_ERROR, messages: ["No [Events] section found in subtitle"], data: null };
   }
 
-  const resultText = text.slice(0, eventsIdx) + fontsSection + "\n" + text.slice(eventsIdx);
+  const aliasByOriginalLower: Record<string, string> = {};
+  const aliasToOriginal: Record<string, string> = {};
+  for (const nameLower of successfulFontNames) {
+    const alias = subsetAliasByNameLower.get(nameLower);
+    if (!alias) continue;
+    aliasByOriginalLower[nameLower] = alias;
+    aliasToOriginal[alias] = displayName(nameLower);
+  }
+  text = insertFontSubsetComments(
+    renameAssFonts(removeFontSubsetComments(text), aliasByOriginalLower),
+    aliasToOriginal,
+  );
+
+  const renamedEventsIdx = text.indexOf("[Events]");
+  if (renamedEventsIdx === -1) {
+    return { code: CODE.CLIENT_ERROR, messages: ["No [Events] section found in subtitle"], data: null };
+  }
+
+  const resultText = text.slice(0, renamedEventsIdx) + fontsSection + "\n" + text.slice(renamedEventsIdx);
   const resultBytes = new TextEncoder().encode("\uFEFF" + resultText);
 
   if (errors.length === 0 && cacheKey) {

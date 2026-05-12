@@ -41,9 +41,10 @@ export async function subsetFont(
   weight: number,
   italic: boolean,
   unicodes: Set<number>,
+  outputFontName = fontName,
 ): Promise<FontSubsetResult> {
   try {
-    return subsetParsedFont(parseFontFace(fontBytes, faceIndex), fontName, weight, italic, unicodes);
+    return subsetParsedFont(parseFontFace(fontBytes, faceIndex), fontName, weight, italic, unicodes, outputFontName);
   } catch (e) {
     return {
       encoded: "",
@@ -59,6 +60,7 @@ export function subsetParsedFont(
   weight: number,
   italic: boolean,
   unicodes: Set<number>,
+  outputFontName = fontName,
 ): FontSubsetResult {
   try {
     // .notdef must always be the first glyph
@@ -116,8 +118,10 @@ export function subsetParsedFont(
       return entry["en"] ?? entry["en-US"] ?? Object.values(entry).find(v => /^[\x20-\x7E]+$/.test(v)) ?? Object.values(entry)[0] ?? null;
     };
 
-    const familyName = pickName("fontFamily") ?? fontName;
-    const styleName = pickName("fontSubfamily") ?? "Regular";
+    const outputFamilyName = outputFontName.trim() || fontName;
+    const outputFamilyIsAscii = /^[\x20-\x7E]+$/.test(outputFamilyName);
+    const familyName = outputFamilyIsAscii ? outputFamilyName : pickName("fontFamily") ?? fontName;
+    const styleName = pickName("preferredSubfamily") ?? pickName("fontSubfamily") ?? "Regular";
     const os2Table = orig.tables?.os2 ? { ...orig.tables.os2 as Record<string, unknown> } : null;
 
     const newFont = new opentype.Font({
@@ -158,6 +162,38 @@ export function subsetParsedFont(
           if (fallback) merged[key].en = fallback;
         }
       }
+
+      // The ASS renderer must be able to match the requested/subset font name
+      // against legacy nameID 1, not only preferredFamily (nameID 16). This is
+      // important for Source Han / 思源 fonts, whose legacy family can include
+      // the weight ("思源黑体 Medium") while subtitles usually request the
+      // preferred family ("思源黑体"). When outputFontName is an ASCII subset
+      // alias, make it the English family so CFF/FreeType based providers can
+      // match it without relying on localized name records.
+      const targetLang = outputFamilyIsAscii ? "en" : "zh";
+      merged.fontFamily[targetLang] = outputFamilyName;
+      merged.preferredFamily = {
+        ...(merged.preferredFamily ?? {}),
+        [targetLang]: outputFamilyName,
+      };
+
+      const fullName = styleName && styleName.toLowerCase() !== "regular"
+        ? `${outputFamilyName} ${styleName}`
+        : outputFamilyName;
+      merged.fullName[targetLang] = fullName;
+      merged.fontSubfamily.en = styleName;
+      merged.preferredSubfamily = {
+        ...(merged.preferredSubfamily ?? {}),
+        en: styleName,
+      };
+
+      const safePostScriptName = `${outputFamilyName}-${styleName}`
+        .replace(/\s+/g, "")
+        .replace(/[^\x21-\x7E]/g, "");
+      if (safePostScriptName) {
+        merged.postScriptName.en = safePostScriptName;
+      }
+
       // postScriptName must be ASCII and contain no whitespace; sanitize each entry.
       if (merged.postScriptName) {
         for (const lang of Object.keys(merged.postScriptName)) {
@@ -180,7 +216,7 @@ export function subsetParsedFont(
     // carriage returns and `:` would terminate the `fontname:` line or split it
     // into a malformed entry that libass / mux tools reject. Strip control chars
     // and `:`; collapse internal whitespace runs.
-    const safeFontName = fontName
+    const safeFontName = outputFamilyName
       .replace(/[\x00-\x1F\x7F:]/g, "")
       .replace(/\s+/g, " ")
       .trim() || "font";

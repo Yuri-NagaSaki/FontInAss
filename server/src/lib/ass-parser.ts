@@ -449,6 +449,110 @@ export function removeSection(assText: string, sectionName: string): string {
   return assText.slice(0, startIdx);
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Remove previous subset rename comments before writing fresh aliases. */
+export function removeFontSubsetComments(assText: string): string {
+  return assText.replace(/^; Font Subset: [^\r\n]*(?:\r?\n)?/gm, "");
+}
+
+/**
+ * Rename ASS style font names and \fn override tags.
+ *
+ * `aliasByOriginalLower` maps lowercased original font names to the internal
+ * subset family names written into generated fonts.
+ */
+export function renameAssFonts(
+  assText: string,
+  aliasByOriginalLower: Record<string, string>,
+): string {
+  if (Object.keys(aliasByOriginalLower).length === 0) return assText;
+
+  const tokens = assText.split(/(\r?\n)/);
+
+  let inStyles = false;
+  let fontNameIdx = -1;
+
+  const renameStyleLine = (line: string): string => {
+    const match = line.match(/^(\s*Style\s*:\s*)(.*)$/i);
+    if (!match || fontNameIdx < 0) return line;
+    const parts = match[2].split(",");
+    if (fontNameIdx >= parts.length) return line;
+
+    const raw = parts[fontNameIdx];
+    const leading = raw.match(/^\s*/)?.[0] ?? "";
+    const trailing = raw.match(/\s*$/)?.[0] ?? "";
+    const trimmed = raw.trim();
+    const vertical = trimmed.startsWith("@");
+    const baseName = vertical ? trimmed.slice(1) : trimmed;
+    const alias = aliasByOriginalLower[baseName.toLowerCase()];
+    if (!alias) return line;
+
+    parts[fontNameIdx] = `${leading}${vertical ? "@" : ""}${alias}${trailing}`;
+    return `${match[1]}${parts.join(",")}`;
+  };
+
+  for (let i = 0; i < tokens.length; i += 2) {
+    const line = tokens[i];
+    const trimmed = line.trim();
+
+    if (/^\[V4\+ Styles\]$/i.test(trimmed)) {
+      inStyles = true;
+      fontNameIdx = -1;
+      continue;
+    }
+    if (inStyles && /^\[[^\]]+\]$/i.test(trimmed)) {
+      inStyles = false;
+      fontNameIdx = -1;
+    }
+    if (!inStyles) continue;
+
+    if (/^\s*Format\s*:/i.test(line)) {
+      const cols = line.replace(/^\s*Format\s*:/i, "").replace(/ /g, "").split(",");
+      fontNameIdx = cols.indexOf("Fontname");
+      continue;
+    }
+    if (/^\s*Style\s*:/i.test(line)) {
+      tokens[i] = renameStyleLine(line);
+    }
+  }
+
+  let result = tokens.join("");
+
+  for (const [originalLower, alias] of Object.entries(aliasByOriginalLower)) {
+    // The map key is already lowercased. Use case-insensitive replacement
+    // against the lower key; ASS font matching itself is case-insensitive.
+    const escaped = escapeRegExp(originalLower);
+    result = result.replace(new RegExp(`(\\\\fn@?)${escaped}(?=[\\\\}\\r\\n])`, "gi"), `$1${alias}`);
+  }
+
+  return result;
+}
+
+/** Insert subset alias comments before the style section for future reprocessing. */
+export function insertFontSubsetComments(
+  assText: string,
+  aliasToOriginal: Record<string, string>,
+): string {
+  const entries = Object.entries(aliasToOriginal);
+  if (entries.length === 0) return assText;
+
+  const comments = entries
+    .map(([alias, original]) => `; Font Subset: ${alias} - ${original}`)
+    .join(assText.includes("\r\n") ? "\r\n" : "\n");
+  const newline = assText.includes("\r\n") ? "\r\n" : "\n";
+  const marker = assText.search(/^\[V4\+ Styles\]\s*$/m);
+
+  if (marker >= 0) {
+    const before = assText.slice(0, marker).replace(/[ \t]*(?:\r?\n)*$/, newline);
+    return before + comments + newline + assText.slice(marker);
+  }
+
+  return comments + newline + assText;
+}
+
 /** Check if ASS text has a [Fonts] section with content */
 export function checkFontsSection(assText: string): 0 | 1 | 2 {
   const match = assText.match(/\[Fonts\]([\s\S]*?)(?=\[|$)/);
