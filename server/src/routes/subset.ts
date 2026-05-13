@@ -288,7 +288,7 @@ async function processSubtitle(
       // Rename fonts in the subtitle text: Style lines and \fn overrides
       const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       text = text.replace(
-        new RegExp(`(,|\\\\fn@?)${escapedPrefix}(?=[,\\\\}\\r\\n])`, "gi"),
+        new RegExp(`(,\\s*|\\\\fn@?)${escapedPrefix}[ \\t]*(?=[,\\\\}\\r\\n])`, "gi"),
         `$1${originalName}`,
       );
     }

@@ -22,8 +22,14 @@ export interface AnalyseResult {
   originalNames: Record<string, string>;
 }
 
+function normalizeFontName(name: string): string {
+  let normalized = name.trim();
+  if (normalized.startsWith("@")) normalized = normalized.slice(1).trim();
+  return normalized;
+}
+
 function makeFontKey(name: string, weight: number, italic: boolean): string {
-  return `${name.toLowerCase()}|${weight}|${italic ? 1 : 0}`;
+  return `${normalizeFontName(name).toLowerCase()}|${weight}|${italic ? 1 : 0}`;
 }
 
 function getOrCreate(map: FontCharMap, key: string): Set<number> {
@@ -71,8 +77,7 @@ function processTagBlock(
 
     // \fn — font name change
     if (tagFull.startsWith("fn")) {
-      let name = tagFull.slice(2);
-      if (name.startsWith("@")) name = name.slice(1); // vertical orientation prefix
+      const name = normalizeFontName(tagFull.slice(2));
       fontName = name || defaultFontName;
       continue;
     }
@@ -149,8 +154,10 @@ function parseDialogueText(
   let curItalic = defaultItalic;
 
   const recordName = (name: string) => {
-    const lower = name.toLowerCase();
-    if (!(lower in originalNames)) originalNames[lower] = name;
+    const normalized = normalizeFontName(name);
+    if (!normalized) return;
+    const lower = normalized.toLowerCase();
+    if (!(lower in originalNames)) originalNames[lower] = normalized;
   };
   recordName(defaultFontName);
 
@@ -295,8 +302,7 @@ export function analyseAss(assText: string): AnalyseResult {
       if (!line.startsWith("Style:")) continue;
       const parts = line.slice(6).trim().split(",");
       const styleName = parts[styleNameIdx]?.trim().replace(/\*$/, "") ?? "";
-      let fontName = parts[fontNameIdx]?.trim() ?? "";
-      if (fontName.startsWith("@")) fontName = fontName.slice(1);
+      const fontName = normalizeFontName(parts[fontNameIdx] ?? "");
       const weight = boldIdx >= 0 && parts[boldIdx]?.trim() === "1" ? 700 : 400;
       const italic = italicIdx >= 0 && parts[italicIdx]?.trim() === "1";
       styleFontName[styleName] = fontName;
@@ -486,7 +492,7 @@ export function renameAssFonts(
     const trailing = raw.match(/\s*$/)?.[0] ?? "";
     const trimmed = raw.trim();
     const vertical = trimmed.startsWith("@");
-    const baseName = vertical ? trimmed.slice(1) : trimmed;
+    const baseName = normalizeFontName(trimmed);
     const alias = aliasByOriginalLower[baseName.toLowerCase()];
     if (!alias) return line;
 
@@ -525,7 +531,7 @@ export function renameAssFonts(
     // The map key is already lowercased. Use case-insensitive replacement
     // against the lower key; ASS font matching itself is case-insensitive.
     const escaped = escapeRegExp(originalLower);
-    result = result.replace(new RegExp(`(\\\\fn@?)${escaped}(?=[\\\\}\\r\\n])`, "gi"), `$1${alias}`);
+    result = result.replace(new RegExp(`(\\\\fn@?)${escaped}[ \\t]*(?=[\\\\}\\r\\n])`, "gi"), `$1${alias}`);
   }
 
   return result;
