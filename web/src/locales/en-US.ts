@@ -175,6 +175,12 @@ export default {
   settingsTitle: "Processing Settings",
   settingsSaved: "Settings saved",
   save: "Save",
+  fontNameModeTitle: "Font naming",
+  fontNameModeDesc: "Choose how subsetted fonts are named based on your next workflow.",
+  fontNameModePreserve: "Preserve names",
+  fontNameModePreserveDesc: "Best for SUP conversion and font lookup",
+  fontNameModeAlias: "Compatibility alias",
+  fontNameModeAliasDesc: "Best for stable ASS/MKV embedded matching",
   clearFontsDesc: "Remove existing [Fonts] section before processing",
   extractFontsDesc: "Extract embedded fonts into ZIP when downloading",
   // Home page

@@ -3,7 +3,7 @@ import { ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { CheckCircle2, X } from "lucide-vue-next";
 import KButton from "./KButton.vue";
-import { useSettings } from "../composables/useSettings";
+import { useSettings, type FontNameMode } from "../composables/useSettings";
 
 defineProps<{
   variant: "dropdown" | "sheet";
@@ -14,7 +14,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-const { save, toggle, get } = useSettings();
+const { settings, save, toggle, get, setFontNameMode } = useSettings();
 
 const savedAck = ref(false);
 
@@ -30,6 +30,11 @@ const toggleItems = [
   { key: "EXTRACT_FONTS",        label: () => t("extractFonts"),       desc: () => t("extractFontsDesc")       },
   { key: "CLEAR_AFTER_DOWNLOAD", label: () => t("clearAfterDownload"), desc: () => t("clearAfterDownloadDesc") },
 ] as const;
+
+const fontNameModeItems: Array<{ value: FontNameMode; label: string; desc: string }> = [
+  { value: "preserve", label: "fontNameModePreserve", desc: "fontNameModePreserveDesc" },
+  { value: "alias", label: "fontNameModeAlias", desc: "fontNameModeAliasDesc" },
+];
 </script>
 
 <template>
@@ -42,6 +47,29 @@ const toggleItems = [
       </button>
     </div>
     <h3 v-else class="font-display font-semibold text-ink-900 text-sm mb-4">{{ t('settingsTitle') }}</h3>
+
+    <!-- Font naming strategy -->
+    <div class="mb-5">
+      <div class="mb-2">
+        <p class="text-xs font-semibold text-ink-800 leading-snug">{{ t('fontNameModeTitle') }}</p>
+        <p class="text-[11px] text-ink-400 leading-snug mt-0.5">{{ t('fontNameModeDesc') }}</p>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <button
+          v-for="item in fontNameModeItems"
+          :key="item.value"
+          type="button"
+          class="text-left rounded-lg border px-3 py-2 transition-colors"
+          :class="settings.FONT_NAME_MODE === item.value
+            ? 'border-sakura-300 bg-sakura-50 text-ink-900'
+            : 'border-ink-200 bg-white text-ink-600 hover:border-sakura-200 hover:bg-sakura-50/50'"
+          @click="setFontNameMode(item.value)"
+        >
+          <span class="block text-xs font-semibold leading-snug">{{ t(item.label) }}</span>
+          <span class="block text-[11px] leading-snug mt-0.5 text-ink-400">{{ t(item.desc) }}</span>
+        </button>
+      </div>
+    </div>
 
     <!-- Toggles -->
     <div class="space-y-3 mb-5">

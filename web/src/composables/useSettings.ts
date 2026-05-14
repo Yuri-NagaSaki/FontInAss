@@ -2,6 +2,8 @@ import { reactive } from "vue";
 
 const STORAGE_KEY = "fontinass_settings";
 
+export type FontNameMode = "preserve" | "alias";
+
 export interface Settings {
   SRT_FORMAT: string;
   SRT_STYLE: string;
@@ -9,6 +11,7 @@ export interface Settings {
   STRICT_MODE: boolean;
   EXTRACT_FONTS: boolean;
   CLEAR_AFTER_DOWNLOAD: boolean;
+  FONT_NAME_MODE: FontNameMode;
 }
 
 const defaults: Settings = {
@@ -18,6 +21,7 @@ const defaults: Settings = {
   STRICT_MODE: true,
   EXTRACT_FONTS: false,
   CLEAR_AFTER_DOWNLOAD: true,
+  FONT_NAME_MODE: "preserve",
 };
 
 // Load once at module init
@@ -31,6 +35,9 @@ const loaded = (() => {
 })();
 
 const settings = reactive<Settings>({ ...defaults, ...loaded });
+if (settings.FONT_NAME_MODE !== "preserve" && settings.FONT_NAME_MODE !== "alias") {
+  settings.FONT_NAME_MODE = defaults.FONT_NAME_MODE;
+}
 
 export function useSettings() {
   const save = () => {
@@ -41,8 +48,12 @@ export function useSettings() {
     (settings as Record<string, unknown>)[key] = !settings[key];
   };
 
+  const setFontNameMode = (mode: FontNameMode) => {
+    settings.FONT_NAME_MODE = mode;
+  };
+
   const get = (key: string): boolean =>
     Boolean(settings[key as keyof Settings]);
 
-  return { settings, save, toggle, get };
+  return { settings, save, toggle, get, setFontNameMode };
 }

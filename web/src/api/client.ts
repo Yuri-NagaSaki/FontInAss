@@ -95,6 +95,7 @@ export interface ListKeysResponse {
 export interface SubsetOptions {
   fontsCheck?: boolean;
   clearFonts?: boolean;
+  fontNameMode?: "preserve" | "alias";
   srtFormat?: string;
   srtStyle?: string;
   signal?: AbortSignal;
@@ -307,6 +308,7 @@ export async function subsetFile(file: File, opts: SubsetOptions = {}): Promise<
     "X-Fonts-Check": opts.fontsCheck ? "1" : "0",
     "X-Clear-Fonts": opts.clearFonts ? "1" : "0",
   };
+  if (opts.fontNameMode) headers["X-Font-Name-Mode"] = opts.fontNameMode;
   if (opts.srtFormat) headers["X-Srt-Format"] = base64Encode(opts.srtFormat);
   if (opts.srtStyle) headers["X-Srt-Style"] = base64Encode(opts.srtStyle);
 

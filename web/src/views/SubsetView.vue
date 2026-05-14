@@ -71,6 +71,7 @@ const processFile = async (entry: FileEntry) => {
     const res = await subsetFile(entry.file, {
       fontsCheck: settings.STRICT_MODE,
       clearFonts: settings.CLEAR_FONTS,
+      fontNameMode: settings.FONT_NAME_MODE,
       srtFormat: settings.SRT_FORMAT,
       srtStyle: settings.SRT_STYLE,
       signal: processingAbort?.signal,

@@ -175,6 +175,12 @@ export default {
   settingsTitle: "处理设置",
   settingsSaved: "设置已保存",
   save: "保存",
+  fontNameModeTitle: "字体命名",
+  fontNameModeDesc: "选择子集后字幕和嵌入字体使用的名称，按后续用途取舍。",
+  fontNameModePreserve: "保留原名",
+  fontNameModePreserveDesc: "适合转 SUP、人工反查字体",
+  fontNameModeAlias: "兼容别名",
+  fontNameModeAliasDesc: "适合 ASS/MKV 嵌入匹配稳定性",
   clearFontsDesc: "处理前移除字幕中已有的 [Fonts] 节",
   extractFontsDesc: "下载时将内嵌字体单独提取到 ZIP",
   // Home page

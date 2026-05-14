@@ -145,9 +145,10 @@ export async function subsetFont(
   italic: boolean,
   unicodes: Set<number>,
   outputFontName = fontName,
+  postScriptBaseName = outputFontName,
 ): Promise<FontSubsetResult> {
   try {
-    return subsetParsedFont(parseFontFace(fontBytes, faceIndex), fontName, weight, italic, unicodes, outputFontName);
+    return subsetParsedFont(parseFontFace(fontBytes, faceIndex), fontName, weight, italic, unicodes, outputFontName, postScriptBaseName);
   } catch (e) {
     return {
       encoded: "",
@@ -164,6 +165,7 @@ export function subsetParsedFont(
   italic: boolean,
   unicodes: Set<number>,
   outputFontName = fontName,
+  postScriptBaseName = outputFontName,
 ): FontSubsetResult {
   try {
     // .notdef must always be the first glyph
@@ -221,10 +223,19 @@ export function subsetParsedFont(
       return entry["en"] ?? entry["en-US"] ?? Object.values(entry).find(v => /^[\x20-\x7E]+$/.test(v)) ?? Object.values(entry)[0] ?? null;
     };
 
+    const isAscii = (value: string) => /^[\x20-\x7E]+$/.test(value);
+    const sanitizePostScript = (value: string) => value
+      .replace(/\s+/g, "")
+      .replace(/[^\x21-\x7E]/g, "");
     const outputFamilyName = outputFontName.trim() || fontName;
-    const outputFamilyIsAscii = /^[\x20-\x7E]+$/.test(outputFamilyName);
-    const familyName = outputFamilyIsAscii ? outputFamilyName : pickName("fontFamily") ?? fontName;
-    const styleName = pickName("preferredSubfamily") ?? pickName("fontSubfamily") ?? "Regular";
+    const outputFamilyIsAscii = isAscii(outputFamilyName);
+    const familyName =
+      (outputFamilyIsAscii ? outputFamilyName : null) ??
+      Object.values(origNames.fontFamily ?? {}).find(isAscii) ??
+      (sanitizePostScript(postScriptBaseName) || "font");
+    const rawStyleName = pickName("preferredSubfamily") ?? pickName("fontSubfamily") ?? "Regular";
+    const styleName = isAscii(rawStyleName) ? rawStyleName : "Regular";
+    const safePostScriptBase = sanitizePostScript(postScriptBaseName || familyName || "font") || "font";
     const os2Table = orig.tables?.os2 ? { ...orig.tables.os2 as Record<string, unknown> } : null;
 
     const newFont = new opentype.Font({
@@ -262,18 +273,24 @@ export function subsetParsedFont(
             newNames[key]?.en ??
             merged[key]["en-US"] ??
             Object.values(merged[key]).find(v => /^[\x20-\x7E]+$/.test(v)) ??
+            (key === "fontFamily" ? familyName : null) ??
+            (key === "fontSubfamily" ? styleName : null) ??
+            (key === "fullName" ? `${familyName} ${styleName}` : null) ??
+            (key === "postScriptName" ? `${safePostScriptBase}-${sanitizePostScript(styleName) || "Regular"}` : null) ??
             Object.values(merged[key])[0];
           if (fallback) merged[key].en = fallback;
         }
       }
+      if (!isAscii(merged.fontFamily.en ?? "")) merged.fontFamily.en = familyName;
+      if (!isAscii(merged.fontSubfamily.en ?? "")) merged.fontSubfamily.en = styleName;
+      if (!isAscii(merged.fullName.en ?? "")) merged.fullName.en = `${familyName} ${styleName}`;
 
       // The ASS renderer must be able to match the requested/subset font name
       // against legacy nameID 1, not only preferredFamily (nameID 16). This is
       // important for Source Han / 思源 fonts, whose legacy family can include
       // the weight ("思源黑体 Medium") while subtitles usually request the
-      // preferred family ("思源黑体"). When outputFontName is an ASCII subset
-      // alias, make it the English family so CFF/FreeType based providers can
-      // match it without relying on localized name records.
+      // preferred family ("思源黑体"). Alias mode writes an ASCII family; preserve
+      // mode keeps the localized public family while CFF/PostScript stays ASCII.
       const targetLang = outputFamilyIsAscii ? "en" : "zh";
       merged.fontFamily[targetLang] = outputFamilyName;
       merged.preferredFamily = {
@@ -291,9 +308,9 @@ export function subsetParsedFont(
         en: styleName,
       };
 
-      const safePostScriptName = `${outputFamilyName}-${styleName}`
-        .replace(/\s+/g, "")
-        .replace(/[^\x21-\x7E]/g, "");
+      const safePostScriptName = `${safePostScriptBase}-${sanitizePostScript(styleName) || "Regular"}`
+        .replace(/^-+/, "")
+        .replace(/-+$/, "");
       if (safePostScriptName) {
         merged.postScriptName.en = safePostScriptName;
       }
@@ -303,7 +320,7 @@ export function subsetParsedFont(
         for (const lang of Object.keys(merged.postScriptName)) {
           const v = merged.postScriptName[lang];
           if (!/^[\x20-\x7E]+$/.test(v) || /\s/.test(v)) {
-            merged.postScriptName[lang] = (familyName + styleName).replace(/\s/g, "").replace(/[^\x20-\x7E]/g, "");
+            merged.postScriptName[lang] = safePostScriptName;
           }
         }
       }

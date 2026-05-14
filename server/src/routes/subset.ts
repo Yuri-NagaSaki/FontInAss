@@ -33,6 +33,7 @@ subset.post("/", async (c) => {
   const contentType = c.req.header("content-type") ?? "";
   const fontsCheck = c.req.header("x-fonts-check") === "1";
   const clearFonts = c.req.header("x-clear-fonts") === "1";
+  const fontNameMode = c.req.header("x-font-name-mode") === "preserve" ? "preserve" : "alias";
   const srtFormatB64 = c.req.header("x-srt-format") ?? "";
   const srtStyleB64 = c.req.header("x-srt-style") ?? "";
   const srtFormat = srtFormatB64 ? atob(srtFormatB64) : "";
@@ -87,7 +88,7 @@ subset.post("/", async (c) => {
     const { name, bytes } = fileEntries[0];
     const clientIp = hashIp(c);
     try {
-      const result = await processSubtitle(name, bytes, { fontsCheck, clearFonts, srtFormat, srtStyle });
+      const result = await processSubtitle(name, bytes, { fontsCheck, clearFonts, fontNameMode, srtFormat, srtStyle });
       const elapsed = Date.now() - reqStart;
       log("info", `[subset] ${name} → code=${result.code} size=${result.data?.length ?? 0}B elapsed=${elapsed}ms`);
 
@@ -134,7 +135,7 @@ subset.post("/", async (c) => {
     const chunk = fileEntries.slice(i, i + BATCH_CONCURRENCY);
     const results = await Promise.allSettled(
       chunk.map(async ({ name, bytes }) =>
-        processSubtitle(name, bytes, { fontsCheck, clearFonts, srtFormat, srtStyle })
+        processSubtitle(name, bytes, { fontsCheck, clearFonts, fontNameMode, srtFormat, srtStyle })
       )
     );
     for (let j = 0; j < results.length; j++) {
@@ -174,6 +175,7 @@ subset.post("/", async (c) => {
 interface ProcessOptions {
   fontsCheck: boolean;
   clearFonts: boolean;
+  fontNameMode: "preserve" | "alias";
   srtFormat: string;
   srtStyle: string;
 }
@@ -216,6 +218,7 @@ async function processSubtitle(
     cacheKey = computeCacheKey(rawBytes, {
       fontsCheck: opts.fontsCheck,
       clearFonts: opts.clearFonts,
+      fontNameMode: opts.fontNameMode,
       srtFormat: opts.srtFormat,
       srtStyle: opts.srtStyle,
     });
@@ -418,7 +421,8 @@ async function processSubtitle(
         const tSub = Date.now();
         const fontDisplayName = originalNames[nameLower] ?? nameLower;
         const subsetAlias = subsetAliasByNameLower.get(nameLower) ?? fontDisplayName;
-        const result = subsetParsedFont(parsedFont, fontDisplayName, weight, italic, unicodeSet, subsetAlias);
+        const outputFontName = opts.fontNameMode === "preserve" ? fontDisplayName : subsetAlias;
+        const result = subsetParsedFont(parsedFont, fontDisplayName, weight, italic, unicodeSet, outputFontName, subsetAlias);
         log("debug", `[subset:${filename}]   subsetted "${displayName(nameLower)}" in ${Date.now()-tSub}ms → ${result.encoded.length} encoded chars${result.error ? ` ERROR: ${result.error}` : ""}${result.missingGlyphs ? ` MISSING: ${result.missingGlyphs}` : ""}`);
         subsetResultMap.set(key, result);
       }
@@ -459,10 +463,14 @@ async function processSubtitle(
     aliasByOriginalLower[nameLower] = alias;
     aliasToOriginal[alias] = displayName(nameLower);
   }
-  text = insertFontSubsetComments(
-    renameAssFonts(removeFontSubsetComments(text), aliasByOriginalLower),
-    aliasToOriginal,
-  );
+  if (opts.fontNameMode === "alias") {
+    text = insertFontSubsetComments(
+      renameAssFonts(removeFontSubsetComments(text), aliasByOriginalLower),
+      aliasToOriginal,
+    );
+  } else {
+    text = removeFontSubsetComments(text);
+  }
 
   const renamedEventsIdx = text.indexOf("[Events]");
   if (renamedEventsIdx === -1) {
