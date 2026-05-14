@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, shallowRef } from "vue";
 import { useI18n } from "vue-i18n";
 import { CheckCircle2, X } from "lucide-vue-next";
 import KButton from "./KButton.vue";
-import { useSettings, type FontNameMode } from "../composables/useSettings";
+import { useSettings } from "../composables/useSettings";
 
 defineProps<{
   variant: "dropdown" | "sheet";
@@ -16,7 +16,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const { settings, save, toggle, get, setFontNameMode } = useSettings();
 
-const savedAck = ref(false);
+const savedAck = shallowRef(false);
 
 const saveSettings = () => {
   save();
@@ -24,17 +24,48 @@ const saveSettings = () => {
   setTimeout(() => { savedAck.value = false; emit("close"); }, 900);
 };
 
-const toggleItems = [
-  { key: "STRICT_MODE",          label: () => t("strictMode"),         desc: () => t("strictModeDesc")         },
-  { key: "CLEAR_FONTS",          label: () => t("clearFonts"),         desc: () => t("clearFontsDesc")         },
-  { key: "EXTRACT_FONTS",        label: () => t("extractFonts"),       desc: () => t("extractFontsDesc")       },
-  { key: "CLEAR_AFTER_DOWNLOAD", label: () => t("clearAfterDownload"), desc: () => t("clearAfterDownloadDesc") },
-] as const;
+const isAliasFontNameMode = computed(() => settings.FONT_NAME_MODE === "alias");
+const toggleFontNameMode = () => {
+  setFontNameMode(isAliasFontNameMode.value ? "preserve" : "alias");
+};
 
-const fontNameModeItems: Array<{ value: FontNameMode; label: string; desc: string }> = [
-  { value: "preserve", label: "fontNameModePreserve", desc: "fontNameModePreserveDesc" },
-  { value: "alias", label: "fontNameModeAlias", desc: "fontNameModeAliasDesc" },
-];
+const switchItems = [
+  {
+    id: "FONT_NAME_MODE",
+    label: () => t("fontNameModeAlias"),
+    desc: () => t("fontNameModeAliasDesc"),
+    checked: () => isAliasFontNameMode.value,
+    toggle: toggleFontNameMode,
+  },
+  {
+    id: "STRICT_MODE",
+    label: () => t("strictMode"),
+    desc: () => t("strictModeDesc"),
+    checked: () => get("STRICT_MODE"),
+    toggle: () => toggle("STRICT_MODE"),
+  },
+  {
+    id: "CLEAR_FONTS",
+    label: () => t("clearFonts"),
+    desc: () => t("clearFontsDesc"),
+    checked: () => get("CLEAR_FONTS"),
+    toggle: () => toggle("CLEAR_FONTS"),
+  },
+  {
+    id: "EXTRACT_FONTS",
+    label: () => t("extractFonts"),
+    desc: () => t("extractFontsDesc"),
+    checked: () => get("EXTRACT_FONTS"),
+    toggle: () => toggle("EXTRACT_FONTS"),
+  },
+  {
+    id: "CLEAR_AFTER_DOWNLOAD",
+    label: () => t("clearAfterDownload"),
+    desc: () => t("clearAfterDownloadDesc"),
+    checked: () => get("CLEAR_AFTER_DOWNLOAD"),
+    toggle: () => toggle("CLEAR_AFTER_DOWNLOAD"),
+  },
+] as const;
 </script>
 
 <template>
@@ -48,49 +79,26 @@ const fontNameModeItems: Array<{ value: FontNameMode; label: string; desc: strin
     </div>
     <h3 v-else class="font-display font-semibold text-ink-900 text-sm mb-4">{{ t('settingsTitle') }}</h3>
 
-    <!-- Font naming strategy -->
-    <div class="mb-5">
-      <div class="mb-2">
-        <p class="text-xs font-semibold text-ink-800 leading-snug">{{ t('fontNameModeTitle') }}</p>
-        <p class="text-[11px] text-ink-400 leading-snug mt-0.5">{{ t('fontNameModeDesc') }}</p>
-      </div>
-      <div class="grid grid-cols-2 gap-2">
-        <button
-          v-for="item in fontNameModeItems"
-          :key="item.value"
-          type="button"
-          class="text-left rounded-lg border px-3 py-2 transition-colors"
-          :class="settings.FONT_NAME_MODE === item.value
-            ? 'border-sakura-300 bg-sakura-50 text-ink-900'
-            : 'border-ink-200 bg-white text-ink-600 hover:border-sakura-200 hover:bg-sakura-50/50'"
-          @click="setFontNameMode(item.value)"
-        >
-          <span class="block text-xs font-semibold leading-snug">{{ t(item.label) }}</span>
-          <span class="block text-[11px] leading-snug mt-0.5 text-ink-400">{{ t(item.desc) }}</span>
-        </button>
-      </div>
-    </div>
-
     <!-- Toggles -->
     <div class="space-y-3 mb-5">
       <label
-        v-for="item in toggleItems"
-        :key="item.key"
+        v-for="item in switchItems"
+        :key="item.id"
         class="flex items-start gap-3 cursor-pointer group"
         role="switch"
-        :aria-checked="get(item.key)"
+        :aria-checked="item.checked()"
         tabindex="0"
-        @click="toggle(item.key)"
-        @keydown.enter.prevent="toggle(item.key)"
-        @keydown.space.prevent="toggle(item.key)"
+        @click="item.toggle()"
+        @keydown.enter.prevent="item.toggle()"
+        @keydown.space.prevent="item.toggle()"
       >
         <div
           class="relative w-9 h-5 rounded-full transition-colors duration-200 flex-shrink-0 mt-0.5"
-          :class="get(item.key) ? 'bg-sakura-400' : 'bg-ink-200'"
+          :class="item.checked() ? 'bg-sakura-400' : 'bg-ink-200'"
         >
           <div
             class="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200"
-            :class="get(item.key) ? 'translate-x-4' : 'translate-x-0.5'"
+            :class="item.checked() ? 'translate-x-4' : 'translate-x-0.5'"
           />
         </div>
         <div class="flex-1">
