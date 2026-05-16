@@ -13,6 +13,7 @@ import * as opentype from "opentype.js";
 import { getDb, lookupFontsByNames, runBatch, type FontLookupRow } from "../db.js";
 import { getFile, putFile } from "../storage.js";
 import { log } from "../config.js";
+import { getTtcFaceOffsets, readSfntTables, type SfntTableRecord } from "./font-validator.js";
 
 // ─── Font lookup ──────────────────────────────────────────────────────────────
 
@@ -226,6 +227,158 @@ function getNames(font: opentype.Font): string[] {
   return [...names].filter(Boolean);
 }
 
+const FALLBACK_NAME_IDS = new Set([1, 4, 16]); // family, full name, preferred family
+
+function decodeUtf16Be(bytes: Uint8Array): string {
+  const codeUnits: number[] = [];
+  for (let i = 0; i + 1 < bytes.length; i += 2) {
+    codeUnits.push((bytes[i] << 8) | bytes[i + 1]);
+  }
+
+  let result = "";
+  for (let i = 0; i < codeUnits.length; i += 8192) {
+    result += String.fromCharCode(...codeUnits.slice(i, i + 8192));
+  }
+  return result;
+}
+
+function decodeMacRoman(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("macintosh").decode(bytes);
+  } catch {
+    return new TextDecoder("latin1").decode(bytes);
+  }
+}
+
+function decodeNameBytes(platformID: number, encodingID: number, bytes: Uint8Array): string {
+  if (platformID === 0 || platformID === 3) return decodeUtf16Be(bytes);
+  if (platformID === 1) return decodeMacRoman(bytes);
+
+  // Some non-standard records still store UTF-16BE. Prefer that when obvious.
+  if (bytes.length >= 2 && bytes.length % 2 === 0 && bytes[0] === 0) {
+    return decodeUtf16Be(bytes);
+  }
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return encodingID === 0
+      ? new TextDecoder("latin1").decode(bytes)
+      : decodeUtf16Be(bytes);
+  }
+}
+
+function cleanName(value: string): string {
+  return value.replace(/\0/g, "").replace(/\s+/g, " ").trim();
+}
+
+function parseNamesFromSfnt(buf: ArrayBuffer, tables: Map<string, SfntTableRecord>): string[] {
+  const name = tables.get("name");
+  if (!name || name.length < 6) return [];
+
+  const view = new DataView(buf);
+  const count = view.getUint16(name.offset + 2, false);
+  const stringOffset = view.getUint16(name.offset + 4, false);
+  const tableEnd = name.offset + name.length;
+  const storageStart = name.offset + stringOffset;
+  const byNameID = new Map<number, { primary: Set<string>; fallback: Set<string> }>();
+
+  for (let i = 0; i < count; i++) {
+    const recordOffset = name.offset + 6 + i * 12;
+    if (recordOffset + 12 > tableEnd) break;
+
+    const platformID = view.getUint16(recordOffset, false);
+    const encodingID = view.getUint16(recordOffset + 2, false);
+    const nameID = view.getUint16(recordOffset + 6, false);
+    if (!FALLBACK_NAME_IDS.has(nameID)) continue;
+
+    const length = view.getUint16(recordOffset + 8, false);
+    const offset = view.getUint16(recordOffset + 10, false);
+    const stringStart = storageStart + offset;
+    if (stringStart > tableEnd || length > tableEnd - stringStart) continue;
+
+    const raw = new Uint8Array(buf, stringStart, length);
+    const decoded = cleanName(decodeNameBytes(platformID, encodingID, raw));
+    if (!decoded) continue;
+
+    const bucket = byNameID.get(nameID) ?? { primary: new Set<string>(), fallback: new Set<string>() };
+    if (platformID === 0 || platformID === 3) {
+      bucket.primary.add(decoded);
+    } else {
+      bucket.fallback.add(decoded);
+    }
+    byNameID.set(nameID, bucket);
+  }
+
+  const result = new Set<string>();
+  for (const id of [16, 1, 4]) {
+    const bucket = byNameID.get(id);
+    if (!bucket) continue;
+    const values = bucket.primary.size > 0 ? bucket.primary : bucket.fallback;
+    for (const value of values) result.add(value);
+  }
+  return [...result];
+}
+
+function parseStyleFromSfnt(buf: ArrayBuffer, tables: Map<string, SfntTableRecord>): {
+  weight: number;
+  bold: boolean;
+  italic: boolean;
+} {
+  const view = new DataView(buf);
+  let weight = 400;
+  let bold = false;
+  let italic = false;
+
+  const os2 = tables.get("OS/2");
+  if (os2 && os2.length >= 64) {
+    const usWeightClass = view.getUint16(os2.offset + 4, false);
+    if (usWeightClass >= 1 && usWeightClass <= 1000) weight = usWeightClass;
+
+    const fsSelection = view.getUint16(os2.offset + 62, false);
+    bold = bold || !!(fsSelection & 0x20);
+    italic = italic || !!(fsSelection & 0x01);
+  }
+
+  const head = tables.get("head");
+  if (head && head.length >= 46) {
+    const macStyle = view.getUint16(head.offset + 44, false);
+    bold = bold || !!(macStyle & 0x01);
+    italic = italic || !!(macStyle & 0x02);
+  }
+
+  return { weight, bold, italic };
+}
+
+function fontFaceFromOpenType(font: opentype.Font, index: number): FontFace {
+  const os2 = font.tables?.os2 as { usWeightClass?: number; fsSelection?: number } | undefined;
+  const head = font.tables?.head as { macStyle?: number } | undefined;
+  const weight = os2?.usWeightClass ?? 400;
+  const fsSelection = os2?.fsSelection ?? 0;
+  const macStyle = head?.macStyle ?? 0;
+
+  return {
+    index,
+    familyNames: getNames(font),
+    weight,
+    bold: !!(fsSelection & 0x20) || !!(macStyle & 0x01),
+    italic: !!(fsSelection & 0x01) || !!(macStyle & 0x02),
+  };
+}
+
+function parseSfntMetadataFallback(buf: ArrayBuffer, directoryOffset: number, index: number): FontFace | null {
+  try {
+    const { tables } = readSfntTables(buf, directoryOffset);
+    return {
+      index,
+      familyNames: parseNamesFromSfnt(buf, tables),
+      ...parseStyleFromSfnt(buf, tables),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function parseFontMetadata(bytes: Uint8Array): FontFace[] {
   const buf = (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength)
     ? bytes.buffer as ArrayBuffer
@@ -236,49 +389,47 @@ export function parseFontMetadata(bytes: Uint8Array): FontFace[] {
   }
 
   const font = parseSingleFace(buf, { lowMemory: true });
-  if (!font) return [];
+  if (!font) {
+    const fallback = parseSfntMetadataFallback(buf, 0, 0);
+    return fallback ? [fallback] : [];
+  }
 
-  const os2 = font.tables?.os2 as { usWeightClass?: number; fsSelection?: number } | undefined;
-  const weight = os2?.usWeightClass ?? 400;
-  const fsSelection = os2?.fsSelection ?? 0;
-  const bold = !!(fsSelection & 0x20);
-  const italic = !!(font.tables?.head as { macStyle?: number } | undefined)?.macStyle
-    ? !!((font.tables.head as { macStyle: number }).macStyle & 0x02)
-    : !!(fsSelection & 0x01);
-
-  return [{
-    index: 0,
-    familyNames: getNames(font),
-    weight,
-    bold,
-    italic,
-  }];
+  const face = fontFaceFromOpenType(font, 0);
+  if (face.familyNames.length === 0) {
+    const fallback = parseSfntMetadataFallback(buf, 0, 0);
+    return fallback ? [fallback] : [face];
+  }
+  return [face];
 }
 
 function parseTTCMetadata(bytes: Uint8Array, buf: ArrayBuffer): FontFace[] {
-  const view = new DataView(buf);
-  const numFonts = view.getUint32(8, false);
-  if (numFonts === 0 || numFonts > 256) return [];
+  let faceOffsets: number[];
+  try {
+    faceOffsets = getTtcFaceOffsets(buf);
+  } catch {
+    return [];
+  }
 
   const faces: FontFace[] = [];
-  for (let i = 0; i < numFonts; i++) {
+  for (let i = 0; i < faceOffsets.length; i++) {
     try {
-      const faceOffset = view.getUint32(12 + i * 4, false);
-      if (faceOffset >= buf.byteLength) continue;
-
       const faceBuf = extractTTCFace(buf, i);
       const font = parseSingleFace(faceBuf, { lowMemory: true });
-      if (!font) continue;
+      if (!font) {
+        const fallback = parseSfntMetadataFallback(buf, faceOffsets[i], i);
+        if (fallback) faces.push(fallback);
+        continue;
+      }
 
-      const os2 = font.tables?.os2 as { usWeightClass?: number; fsSelection?: number } | undefined;
-      const weight = os2?.usWeightClass ?? 400;
-      const fsSelection = os2?.fsSelection ?? 0;
-      const bold = !!(fsSelection & 0x20);
-      const italic = !!(fsSelection & 0x01);
-
-      faces.push({ index: i, familyNames: getNames(font), weight, bold, italic });
+      const face = fontFaceFromOpenType(font, i);
+      if (face.familyNames.length === 0) {
+        faces.push(parseSfntMetadataFallback(buf, faceOffsets[i], i) ?? face);
+      } else {
+        faces.push(face);
+      }
     } catch {
-      // skip invalid faces
+      const fallback = parseSfntMetadataFallback(buf, faceOffsets[i], i);
+      if (fallback) faces.push(fallback);
     }
   }
   return faces;
@@ -352,9 +503,10 @@ export interface IndexResult {
 /**
  * Index a font file — write bytes to storage and insert DB rows.
  * If existingKey is provided, only DB rows are written (file already on disk).
- * If the font cannot be parsed by opentype.js (e.g. old cmap format),
- * a fallback face using the filename as family name is used so the entry
- * still lands in the DB and won't be re-attempted on every scan.
+ * If metadata cannot be parsed (e.g. old cmap format or a newer optional
+ * layout table unsupported by opentype.js), a fallback face using the filename
+ * as family name is used so the entry still lands in the DB and won't be
+ * re-attempted on every scan.
  */
 export async function indexFont(
   filename: string,
@@ -363,7 +515,7 @@ export async function indexFont(
 ): Promise<IndexResult> {
   let faces = parseFontMetadata(bytes);
 
-  if (faces.length === 0) {
+  if (faces.length === 0 || faces.every(face => face.familyNames.length === 0)) {
     // Fallback: use filename (without extension) as the family name.
     // This ensures unparseable fonts are still stored and searchable by filename.
     const baseName = filename.replace(/\.(ttf|otf|ttc|otc)$/i, "").trim();

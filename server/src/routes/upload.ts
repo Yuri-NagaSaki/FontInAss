@@ -6,7 +6,7 @@
  * Strict validation ensures only genuine font files are accepted:
  *  1. Extension whitelist (.ttf/.otf/.ttc/.otc)
  *  2. Magic-byte signature check
- *  3. opentype.js structural parse
+ *  3. sfnt/TTC table structure validation
  *
  * No file-size limit — local deployments have no memory constraints.
  * Accepted fonts are stored under UPLOAD_TARGET_DIR (default "CatCat-Fonts/")

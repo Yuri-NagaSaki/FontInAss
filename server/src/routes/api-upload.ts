@@ -15,8 +15,8 @@
  *   - Every accepted file is content-hashed (SHA-256). If the same hash is
  *     already present in font_files, the upload is recorded as a "duplicate"
  *     and the existing entry is reused — keeping the index immune to spam.
- *   - Otherwise the font is validated (extension + magic bytes + opentype
- *     parse), stored under <UPLOAD_TARGET_DIR> (default CatCat-Fonts/), and
+ *   - Otherwise the font is validated (extension + magic bytes + sfnt/TTC
+ *     table structure), stored under <UPLOAD_TARGET_DIR> (default CatCat-Fonts/), and
  *     indexed into SQLite.
  *   - Each attempt (success / duplicate / rejected / error) is logged in
  *     api_upload_history for the admin dashboard.
@@ -108,7 +108,7 @@ apiUpload.post("/upload", async (c) => {
       continue;
     }
 
-    // Validate (extension + magic bytes + opentype parse)
+    // Validate (extension + magic bytes + sfnt/TTC table structure)
     const validation = validateFontFile(filename, bytes);
     if (!validation.valid) {
       results.push({
