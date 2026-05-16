@@ -9,6 +9,7 @@
 import * as opentype from "opentype.js";
 import { uuencode } from "./uuencode.js";
 import { log } from "../config.js";
+import { readSfntTables } from "./font-validator.js";
 
 export interface FontSubsetResult {
   /** UUencoded subset font data, ready to embed in ASS [Fonts] section */
@@ -127,11 +128,79 @@ function formatNamesForWriter(names: FontNames, writerTemplate: unknown): unknow
   return result;
 }
 
+const OPTIONAL_LAYOUT_TABLES = new Set(["GDEF", "GPOS", "GSUB"]);
+
+function shouldRetryWithoutLayoutTables(buf: ArrayBuffer): boolean {
+  try {
+    const { tables } = readSfntTables(buf);
+    return [...OPTIONAL_LAYOUT_TABLES].some(tag => tables.has(tag));
+  } catch {
+    return false;
+  }
+}
+
+function stripOptionalLayoutTables(buf: ArrayBuffer): ArrayBuffer | null {
+  const { sfntVersion, tables } = readSfntTables(buf);
+  const keptTables = [...tables.values()].filter(table => !OPTIONAL_LAYOUT_TABLES.has(table.tag));
+  if (keptTables.length === tables.size || keptTables.length === 0) return null;
+
+  const numTables = keptTables.length;
+  const headerSize = 12 + numTables * 16;
+  const newOffsets: number[] = [];
+  let cursor = headerSize;
+  for (const table of keptTables) {
+    newOffsets.push(cursor);
+    cursor += (table.length + 3) & ~3;
+  }
+
+  const result = new ArrayBuffer(cursor);
+  const out = new Uint8Array(result);
+  const outView = new DataView(result);
+  const src = new Uint8Array(buf);
+
+  outView.setUint32(0, sfntVersion, false);
+  outView.setUint16(4, numTables, false);
+  const entrySelector = Math.floor(Math.log2(numTables));
+  const searchRange = (1 << entrySelector) * 16;
+  outView.setUint16(6, searchRange, false);
+  outView.setUint16(8, entrySelector, false);
+  outView.setUint16(10, numTables * 16 - searchRange, false);
+
+  for (let i = 0; i < keptTables.length; i++) {
+    const table = keptTables[i];
+    const recordOffset = 12 + i * 16;
+    for (let j = 0; j < 4; j++) out[recordOffset + j] = table.tag.charCodeAt(j);
+    outView.setUint32(recordOffset + 4, table.checksum, false);
+    outView.setUint32(recordOffset + 8, newOffsets[i], false);
+    outView.setUint32(recordOffset + 12, table.length, false);
+    out.set(src.subarray(table.offset, table.offset + table.length), newOffsets[i]);
+  }
+
+  return result;
+}
+
+function parseOpenTypeFace(buf: ArrayBuffer): opentype.Font {
+  try {
+    return opentype.parse(buf, { lowMemory: true });
+  } catch (e) {
+    if (!shouldRetryWithoutLayoutTables(buf)) throw e;
+
+    const stripped = stripOptionalLayoutTables(buf);
+    if (!stripped) throw e;
+
+    try {
+      return opentype.parse(stripped, { lowMemory: true });
+    } catch {
+      throw e;
+    }
+  }
+}
+
 export function parseFontFace(fontBytes: Uint8Array, faceIndex: number): opentype.Font {
   const buf = toArrayBuffer(fontBytes);
   return isTTC(fontBytes)
     ? parseTTCFace(buf, faceIndex)
-    : opentype.parse(buf, { lowMemory: true });
+    : parseOpenTypeFace(buf);
 }
 
 /**
@@ -460,5 +529,5 @@ function extractTTCFace(ttcBuf: ArrayBuffer, faceIndex: number): ArrayBuffer {
 }
 
 function parseTTCFace(buf: ArrayBuffer, faceIndex: number): opentype.Font {
-  return opentype.parse(extractTTCFace(buf, faceIndex), { lowMemory: true });
+  return parseOpenTypeFace(extractTTCFace(buf, faceIndex));
 }
