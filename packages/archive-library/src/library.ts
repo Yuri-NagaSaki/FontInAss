@@ -1,5 +1,13 @@
-import type { ArchiveManifest, ArchiveMetadata, ArchivePatch, ArchivePreview, SharedArchive } from "@fontinass/contracts";
 import type {
+  ArchiveManifest,
+  ArchiveMetadata,
+  ArchivePatch,
+  ArchivePreview,
+  SharedArchive,
+  WorkspaceArchive,
+} from "@fontinass/contracts";
+import type {
+  ArchiveAttribution,
   ArchiveInspector,
   ArchiveLibrary,
   ArchiveRecord,
@@ -40,6 +48,12 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
     return this.repository.listPending().map(toPublicArchive);
   }
 
+  listOrganization(organizationId: string): WorkspaceArchive[] {
+    return this.repository
+      .listByOrganization(organizationId)
+      .map(toWorkspaceArchive);
+  }
+
   async publish(input: ArchiveUploadInput): Promise<SharedArchive> {
     if (!this.published.isConfigured()) throw new ArchiveLibraryError("R2 is not configured", "storage_unavailable");
     const inspection = await this.validate(input);
@@ -55,6 +69,33 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
     this.repository.insert(record);
     await this.writeManifest();
     return toPublicArchive(record);
+  }
+
+  async publishOwned(
+    input: ArchiveUploadInput,
+    attribution: ArchiveAttribution,
+  ): Promise<WorkspaceArchive> {
+    if (!this.published.isConfigured()) {
+      throw new ArchiveLibraryError("R2 is not configured", "storage_unavailable");
+    }
+    const inspection = await this.validate(input);
+    const key = archiveKey(input.metadata, input.filename);
+    await this.published.put(key, input.bytes, archiveMimeType(inspection.type));
+    const existing = this.repository.findByStorageKey(key);
+    if (existing) {
+      this.repository.delete(existing.id);
+      await this.pending.delete(existing.pending_path);
+    }
+    const record = makeRecord(
+      input,
+      inspection,
+      { status: "published", storageKey: key, pendingPath: null },
+      attribution,
+    );
+    record.download_url = this.published.publicUrl(key);
+    this.repository.insert(record);
+    await this.writeManifest();
+    return toWorkspaceArchive(record);
   }
 
   async contribute(input: ArchiveUploadInput, ipHash: string): Promise<SharedArchive> {
@@ -152,6 +193,17 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
     return { filename: record.filename, bytes: await this.readBytes(record) };
   }
 
+  async downloadOwned(
+    id: string,
+    organizationId: string,
+  ): Promise<{ filename: string; bytes: Uint8Array }> {
+    const record = this.repository.findById(id);
+    if (!record || record.organization_id !== organizationId) {
+      throw new ArchiveLibraryError("Archive not found", "not_found");
+    }
+    return { filename: record.filename, bytes: await this.readBytes(record) };
+  }
+
   async restoreFromManifest(): Promise<number> {
     const manifest = await this.published.readManifest();
     if (!manifest) return 0;
@@ -159,6 +211,11 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
       ...archive,
       download_url: archive.r2_key ? this.published.publicUrl(archive.r2_key) : null,
       pending_path: null,
+      organization_id: null,
+      organization_name: null,
+      uploader_fingerprint: null,
+      actor_kind: "legacy" as const,
+      actor_id_fingerprint: null,
     }));
     this.repository.replacePublished(records);
     return records.length;
@@ -166,15 +223,11 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
 
   async writeManifest(): Promise<void> {
     if (!this.published.isConfigured()) return;
-    const archives = this.repository.listPublished().map(({ pending_path: _pendingPath, ...record }) => ({
-      ...record,
-      status: "published" as const,
-      download_url: undefined,
-    }));
+    const archives = this.repository.listPublished().map(toManifestArchive);
     const manifest = {
       version: 1 as const,
       generated_at: new Date().toISOString(),
-      archives: archives.map(({ download_url: _downloadUrl, ...archive }) => archive),
+      archives,
     } satisfies ArchiveManifest;
     await this.published.writeManifest(manifest);
   }
@@ -202,6 +255,7 @@ function makeRecord(
   input: ArchiveUploadInput,
   inspection: Awaited<ReturnType<ArchiveInspector["inspect"]>>,
   state: { id?: string; status: "pending" | "published"; storageKey: string | null; pendingPath: string | null },
+  attribution?: ArchiveAttribution,
 ): ArchiveRecord {
   const now = new Date().toISOString();
   return {
@@ -225,12 +279,49 @@ function makeRecord(
     sub_entries: [],
     created_at: now,
     updated_at: now,
+    organization_id: attribution?.organizationId ?? null,
+    organization_name: attribution?.organizationName ?? null,
+    uploader_fingerprint: attribution?.uploaderFingerprint ?? null,
+    actor_kind: attribution?.actorKind ?? "legacy",
+    actor_id_fingerprint: attribution?.actorIdFingerprint ?? null,
   };
 }
 
 function toPublicArchive(record: ArchiveRecord): SharedArchive {
-  const { pending_path: _pendingPath, ...archive } = record;
+  const {
+    pending_path: _pendingPath,
+    organization_id: _organizationId,
+    organization_name: _organizationName,
+    uploader_fingerprint: _uploaderFingerprint,
+    actor_kind: _actorKind,
+    actor_id_fingerprint: _actorIdFingerprint,
+    ...archive
+  } = record;
   return archive;
+}
+
+function toWorkspaceArchive(record: ArchiveRecord): WorkspaceArchive {
+  if (
+    !record.organization_id ||
+    !record.organization_name ||
+    !record.uploader_fingerprint ||
+    !record.actor_kind
+  ) {
+    throw new ArchiveLibraryError("Archive ownership is unavailable", "not_found");
+  }
+  return {
+    ...toPublicArchive(record),
+    organizationId: record.organization_id,
+    organizationName: record.organization_name,
+    uploaderFingerprint: record.uploader_fingerprint,
+    actorKind: record.actor_kind,
+  };
+}
+
+function toManifestArchive(record: ArchiveRecord) {
+  const archive = toPublicArchive(record);
+  const { download_url: _downloadUrl, ...manifestArchive } = archive;
+  return { ...manifestArchive, status: "published" as const };
 }
 
 function safeSegment(value: string): string {

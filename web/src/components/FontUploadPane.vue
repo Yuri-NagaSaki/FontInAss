@@ -9,7 +9,7 @@ import { uploadFonts } from "../api/client";
 import KButton from "./KButton.vue";
 import { formatBytes } from "../lib/format";
 
-const { t, locale } = useI18n();
+const { t } = useI18n();
 const emit = defineEmits<{ uploaded: [] }>();
 
 // ── Upload State ──────────────────────────────────────────────────────────────
@@ -128,9 +128,9 @@ onBeforeUnmount(() => {
           <span v-if="uploadSummary" key="summary" class="flex items-center gap-1.5 text-sm font-medium"
             :class="uploadSummary.fail > 0 ? 'text-amber-600' : 'text-mint-600'">
             <CheckCircle2 class="w-3.5 h-3.5 shrink-0" />
-            {{ uploadSummary.ok }} {{ locale.startsWith('zh') ? '个已上传' : 'uploaded' }}
+            {{ t('fontUploadSummaryAccepted', { n: uploadSummary.ok }) }}
             <template v-if="uploadSummary.fail > 0">
-              · <span class="text-rose-500">{{ uploadSummary.fail }} {{ locale.startsWith('zh') ? '失败' : 'failed' }}</span>
+              · <span class="text-rose-500">{{ t('fontUploadSummaryFailed', { n: uploadSummary.fail }) }}</span>
             </template>
           </span>
           <span v-else-if="uploadRunning" key="progress" class="flex items-center gap-1.5 text-sm font-medium text-sakura-500">

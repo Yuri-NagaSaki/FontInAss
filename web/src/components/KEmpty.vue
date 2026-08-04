@@ -25,7 +25,7 @@ defineProps<{
       />
     </div>
     <h3 class="font-display font-semibold text-ink-800 text-base">
-      {{ title ?? '暂无内容' }}
+      {{ title ?? '' }}
     </h3>
     <p v-if="description" class="text-sm text-ink-400 max-w-xs leading-relaxed">
       {{ description }}

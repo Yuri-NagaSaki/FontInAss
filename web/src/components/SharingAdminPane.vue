@@ -415,7 +415,7 @@ async function sharingSubmitUpload() {
             <div>
               <label class="text-xs font-medium text-ink-500 mb-1 block">{{ t('sharingSeason') }} *</label>
               <select v-model="sharingUploadForm.season" class="w-full px-3 py-2 rounded-xl border border-sakura-200 text-sm focus:outline-none focus:ring-2 focus:ring-sakura-300/50">
-                <option v-for="s in SEASON_OPTIONS" :key="s" :value="s">{{ s }}</option>
+                <option v-for="s in SEASON_OPTIONS" :key="s" :value="s">{{ s === '合集' ? t('sharingSeasonCollection') : s }}</option>
               </select>
             </div>
             <div>

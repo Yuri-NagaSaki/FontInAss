@@ -1,4 +1,11 @@
-import type { ArchiveManifest, ArchiveMetadata, ArchivePatch, ArchivePreview, SharedArchive } from "@fontinass/contracts";
+import type {
+  ArchiveManifest,
+  ArchiveMetadata,
+  ArchivePatch,
+  ArchivePreview,
+  SharedArchive,
+  WorkspaceArchive,
+} from "@fontinass/contracts";
 
 export interface ArchiveInspection {
   valid: boolean;
@@ -32,11 +39,17 @@ export interface PendingArchiveStore {
 
 export interface ArchiveRecord extends SharedArchive {
   pending_path: string | null;
+  organization_id: string | null;
+  organization_name: string | null;
+  uploader_fingerprint: string | null;
+  actor_kind: "session" | "credential" | "operator" | "legacy" | null;
+  actor_id_fingerprint: string | null;
 }
 
 export interface ArchiveRepository {
   listPublished(): ArchiveRecord[];
   listPending(): ArchiveRecord[];
+  listByOrganization(organizationId: string): ArchiveRecord[];
   findById(id: string): ArchiveRecord | null;
   findByStorageKey(key: string): ArchiveRecord | null;
   insert(record: ArchiveRecord): void;
@@ -53,10 +66,23 @@ export interface ArchiveUploadInput {
   metadata: ArchiveMetadata;
 }
 
+export interface ArchiveAttribution {
+  organizationId: string;
+  organizationName: string;
+  uploaderFingerprint: string;
+  actorKind: "session" | "credential" | "operator";
+  actorIdFingerprint: string;
+}
+
 export interface ArchiveLibrary {
   listPublished(): SharedArchive[];
   listPending(): SharedArchive[];
+  listOrganization(organizationId: string): WorkspaceArchive[];
   publish(input: ArchiveUploadInput): Promise<SharedArchive>;
+  publishOwned(
+    input: ArchiveUploadInput,
+    attribution: ArchiveAttribution,
+  ): Promise<WorkspaceArchive>;
   contribute(input: ArchiveUploadInput, ipHash: string): Promise<SharedArchive>;
   approve(id: string): Promise<SharedArchive>;
   reject(id: string): Promise<SharedArchive>;
@@ -64,6 +90,10 @@ export interface ArchiveLibrary {
   edit(id: string, patch: ArchivePatch): Promise<SharedArchive>;
   preview(id: string): Promise<ArchivePreview>;
   download(id: string): Promise<{ filename: string; bytes: Uint8Array }>;
+  downloadOwned(
+    id: string,
+    organizationId: string,
+  ): Promise<{ filename: string; bytes: Uint8Array }>;
   restoreFromManifest(): Promise<number>;
   writeManifest(): Promise<void>;
 }

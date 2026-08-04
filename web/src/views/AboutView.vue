@@ -5,32 +5,32 @@ const { t } = useI18n();
 
 <template>
   <article class="text-page">
-    <h1>关于 FontInAss</h1>
+    <h1>{{ t('aboutTitle') }}</h1>
     <p>{{ t('aboutDesc') }}</p>
 
     <h2>{{ t('openSourceTitle') }}</h2>
     <p>{{ t('openSourceDesc') }}</p>
-    <p>字体库规模约 100 GB，包含 4 套字体集，并持续更新。</p>
+    <p>{{ t('aboutLibraryScale') }}</p>
 
     <h2>{{ t('techStackTitle') }}</h2>
     <p>{{ t('techStackDesc') }}</p>
     <ul>
-      <li>后端 Bun、Hono、SQLite、opentype.js</li>
-      <li>前端 Vue 3、TypeScript、Tailwind CSS v4、Vite</li>
-      <li>部署 Docker（单镜像，多平台）</li>
+      <li>{{ t('aboutStackBackend') }}</li>
+      <li>{{ t('aboutStackFrontend') }}</li>
+      <li>{{ t('aboutStackDeploy') }}</li>
     </ul>
 
     <h2>{{ t('openSourceRepoTitle') }}</h2>
     <p>{{ t('openSourceRepoDesc') }}</p>
-    <p>本项目源码托管于 <a href="https://github.com/Yuri-NagaSaki/FontInAss" target="_blank" rel="noopener">Yuri-NagaSaki/FontInAss</a>，采用 AGPL-3.0 许可证。</p>
+    <p>{{ t('aboutRepositoryPrefix') }} <a href="https://github.com/Yuri-NagaSaki/FontInAss" target="_blank" rel="noopener">Yuri-NagaSaki/FontInAss</a>，{{ t('aboutRepositoryLicense') }}</p>
 
     <h2>{{ t('communityTitle') }}</h2>
     <ul>
-      <li><a href="https://github.com/Yuri-NagaSaki/FontInAss" target="_blank" rel="noopener">在 GitHub 上查看源码</a></li>
-      <li><a href="https://t.me/anibtass" target="_blank" rel="noopener">加入 Telegram 群组 @anibtass</a></li>
-      <li><a href="mailto:sa@catcat.blog">发送邮件至 sa@catcat.blog</a></li>
-      <li><a href="https://catcat.blog" target="_blank" rel="noopener">访问博客 catcat.blog</a></li>
-      <li><a href="https://anibt.net/" target="_blank" rel="noopener">访问 AniBT</a></li>
+      <li><a href="https://github.com/Yuri-NagaSaki/FontInAss" target="_blank" rel="noopener">{{ t('aboutLinkGitHub') }}</a></li>
+      <li><a href="https://t.me/anibtass" target="_blank" rel="noopener">{{ t('aboutLinkTelegram') }}</a></li>
+      <li><a href="mailto:sa@catcat.blog">{{ t('aboutLinkEmail') }}</a></li>
+      <li><a href="https://catcat.blog" target="_blank" rel="noopener">{{ t('aboutLinkBlog') }}</a></li>
+      <li><a href="https://anibt.net/" target="_blank" rel="noopener">{{ t('aboutLinkAniBT') }}</a></li>
     </ul>
   </article>
 </template>

@@ -21,11 +21,12 @@ import {
   listSharedArchives,
   deleteArchive,
   downloadArchiveFile,
-  getApiKey,
 } from "../api/client";
+import { useWorkspaceSession } from "../composables/useWorkspaceSession";
 import { buildSearchIndex, searchArchives } from "../lib/search";
 
 const { t } = useI18n();
+const workspace = useWorkspaceSession();
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -185,7 +186,7 @@ function closeContributeView() {
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
 
-const isAdmin = computed(() => !!getApiKey());
+const isAdmin = workspace.canManage;
 
 async function loadArchives() {
   loading.value = true;

@@ -7,11 +7,12 @@
   "scripts": {
     "dev": "bun run --cwd server dev & bun run --cwd web dev",
     "typecheck": "bun run --cwd packages/contracts typecheck && bun run --cwd packages/subtitle-processing typecheck && bun run --cwd packages/font-catalog typecheck && bun run --cwd packages/archive-library typecheck && bun run --cwd packages/access-control typecheck && bun run --cwd packages/font-submission typecheck && bun run --cwd packages/activity-log typecheck && bun run --cwd packages/persistence typecheck && bun run --cwd packages/storage typecheck && bun run --cwd server typecheck && bun run --cwd web typecheck",
-    "test": "bun test packages server/src",
+    "test": "bun test packages server/src && node --test scripts/private-data-guard.test.mjs",
     "build": "bun run --cwd web build && bun run --cwd server build",
     "check": "bun run typecheck && bun run test && bun run build",
     "data:manifest": "bun server/scripts/export-archive-manifest.ts",
     "data:reindex": "bun server/scripts/rebuild-font-index.ts",
+    "data:archive-ownership": "bun server/scripts/map-archive-ownership.ts",
     "start": "bun run --cwd server start"
   },
   "devDependencies": {

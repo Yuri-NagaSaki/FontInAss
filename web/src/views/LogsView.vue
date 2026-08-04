@@ -7,7 +7,7 @@ import {
 } from "lucide-vue-next";
 import {
   listProcessingLogs, getMissingFonts, getLogStats,
-  resolveMissingFont, unresolveMissingFont, getApiKey,
+  resolveMissingFont, unresolveMissingFont,
 } from "../api/client";
 import type { ProcessingLog, MissingFontRanking, LogStats } from "../api/client";
 import KButton from "../components/KButton.vue";
@@ -17,7 +17,7 @@ import KSpinner from "../components/KSpinner.vue";
 import { useConfirm } from "../composables/useConfirm";
 
 const { t } = useI18n();
-const hasKey = computed(() => !!getApiKey());
+const hasKey = computed(() => true);
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const loading = ref(false);

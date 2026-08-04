@@ -23,7 +23,8 @@ COPY --from=builder /build/server/dist ./dist
 COPY --from=builder /build/web/dist /app/web/dist
 RUN mkdir -p /app/fonts /app/data
 
-ENV PORT=3000 \
+ENV NODE_ENV=production \
+    PORT=3000 \
     FONT_DIR=/app/fonts \
     DB_PATH=/app/data/fontinass-v2.db \
     PENDING_DIR=/app/data/pending-v2 \
@@ -35,11 +36,10 @@ ENV PORT=3000 \
     PUBLIC_UPLOAD_MAX_FILE_SIZE=104857600 \
     PUBLIC_UPLOAD_MAX_BATCH_SIZE=209715200 \
     PUBLIC_UPLOAD_REQUESTS_PER_MINUTE=30 \
-    TOKEN_APPLICATION_DAILY_LIMIT=3 \
     LOG_LEVEL=info
 
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD bun -e "const h=process.env.API_KEY?{'X-API-Key':process.env.API_KEY}:{};const r=await fetch('http://localhost:3000/api/health',{headers:h});if(!r.ok)process.exit(1);const j=await r.json();if(j.version!==2)process.exit(1)" || exit 1
+  CMD bun -e "const r=await fetch('http://localhost:3000/api/health');if(!r.ok)process.exit(1);const j=await r.json();if(j.version!==3)process.exit(1)" || exit 1
 
 CMD ["bun", "dist/index.js"]

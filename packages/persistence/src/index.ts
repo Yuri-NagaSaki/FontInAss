@@ -9,25 +9,18 @@ import type {
 } from "@fontinass/font-catalog";
 import type { ArchiveRecord, ArchiveRepository } from "@fontinass/archive-library";
 import type {
-  ApiTokenApplicationRecord,
-  ApiTokenRecord,
-  UploadAccessRepository,
-  UploadRequestContext,
+  LoginTransactionRecord,
+  ProgrammaticCredentialRecord,
+  WebSessionRecord,
+  WorkspaceAccessRepository,
 } from "@fontinass/access-control";
 import type { ActivityRepository, ProcessingEventInput } from "@fontinass/activity-log";
 import type {
-  ApiHistoryResponse,
-  ApiTokenApplicationList,
-  ApiTokenApplicationStatus,
-  ApiTokenStats,
-  ApiUploadHistoryItem,
-  ApiUploadResult,
-  ApiUploadStatus,
+  AccessReceipt,
+  OidcWorkspaceIdentity,
   LogStats,
   MissingFontRanking,
   ProcessingLogList,
-  ReviewApiTokenApplication,
-  UpdateApiToken,
 } from "@fontinass/contracts";
 
 const SCHEMA = `
@@ -84,8 +77,14 @@ CREATE TABLE IF NOT EXISTS archives (
   sub_entries_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+  ,organization_id TEXT
+  ,organization_name TEXT
+  ,uploader_fingerprint TEXT
+  ,actor_kind TEXT CHECK(actor_kind IS NULL OR actor_kind IN ('session','credential','operator','legacy'))
+  ,actor_id_fingerprint TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_archives_status_sort ON archives(status, letter, name_cn, season);
+CREATE INDEX IF NOT EXISTS idx_archives_organization_time ON archives(organization_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS upload_rate_limits (
   ip_hash TEXT NOT NULL,
@@ -187,35 +186,181 @@ CREATE TABLE IF NOT EXISTS resolved_fonts (
   font_name TEXT PRIMARY KEY,
   resolved_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
+
+CREATE TABLE IF NOT EXISTS oidc_identities (
+  user_id TEXT PRIMARY KEY,
+  issuer TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  picture TEXT,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  UNIQUE(issuer, subject)
+);
+
+CREATE TABLE IF NOT EXISTS oidc_login_transactions (
+  id TEXT PRIMARY KEY,
+  state_fingerprint TEXT NOT NULL UNIQUE,
+  sealed_payload TEXT NOT NULL,
+  return_to TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_oidc_login_transactions_expiry ON oidc_login_transactions(expires_at);
+
+CREATE TABLE IF NOT EXISTS web_sessions (
+  id TEXT PRIMARY KEY,
+  token_fingerprint TEXT NOT NULL UNIQUE,
+  user_id TEXT NOT NULL REFERENCES oidc_identities(user_id) ON DELETE CASCADE,
+  display_name TEXT NOT NULL,
+  picture TEXT,
+  csrf_fingerprint TEXT NOT NULL,
+  sealed_id_token TEXT,
+  authenticated_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  idle_expires_at TEXT NOT NULL,
+  absolute_expires_at TEXT NOT NULL,
+  revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_web_sessions_user_active ON web_sessions(user_id, revoked_at, idle_expires_at);
+
+CREATE TABLE IF NOT EXISTS programmatic_credentials (
+  id TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL REFERENCES oidc_identities(user_id) ON DELETE CASCADE,
+  organization_id TEXT NOT NULL,
+  organization_name TEXT NOT NULL,
+  name TEXT NOT NULL,
+  prefix TEXT NOT NULL UNIQUE,
+  suffix TEXT NOT NULL,
+  credential_fingerprint TEXT NOT NULL,
+  scopes_json TEXT NOT NULL,
+  generation INTEGER NOT NULL CHECK(generation >= 1),
+  created_at TEXT NOT NULL,
+  authorized_at TEXT NOT NULL,
+  last_used_at TEXT,
+  expires_at TEXT,
+  revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_programmatic_credentials_owner_time ON programmatic_credentials(owner_user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_programmatic_credentials_org_time ON programmatic_credentials(organization_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS credential_creation_rate_limits (
+  owner_fingerprint TEXT NOT NULL,
+  hour_bucket TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY(owner_fingerprint, hour_bucket)
+);
+
+CREATE TABLE IF NOT EXISTS access_receipts (
+  id TEXT PRIMARY KEY,
+  actor_kind TEXT NOT NULL CHECK(actor_kind IN ('session','credential','operator','legacy')),
+  actor_fingerprint TEXT NOT NULL,
+  organization_id TEXT,
+  capability TEXT NOT NULL,
+  resource_type TEXT NOT NULL CHECK(resource_type IN ('font','archive','credential','session','system')),
+  resource_fingerprint TEXT,
+  outcome TEXT NOT NULL CHECK(outcome IN ('allowed','denied','completed','revoked')),
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_access_receipts_time ON access_receipts(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_access_receipts_org_time ON access_receipts(organization_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS font_upload_receipts (
+  id TEXT PRIMARY KEY,
+  credential_id TEXT REFERENCES programmatic_credentials(id) ON DELETE SET NULL,
+  legacy_token_id TEXT,
+  actor_kind TEXT NOT NULL CHECK(actor_kind IN ('session','credential','operator','legacy')),
+  actor_fingerprint TEXT NOT NULL,
+  organization_id TEXT,
+  font_file_id TEXT,
+  filename TEXT NOT NULL,
+  size INTEGER NOT NULL DEFAULT 0,
+  sha256 TEXT,
+  status TEXT NOT NULL CHECK(status IN ('success','duplicate','rejected','error')),
+  error TEXT,
+  client_ip_fingerprint TEXT,
+  user_agent TEXT,
+  uploaded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_font_upload_receipts_credential_time ON font_upload_receipts(credential_id, uploaded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_font_upload_receipts_org_time ON font_upload_receipts(organization_id, uploaded_at DESC);
 `;
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function migrate(database: Database): void {
   const current = database.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
   if (current >= SCHEMA_VERSION) return;
 
   database.transaction(() => {
-    addColumn(database, "api_tokens", "application_id", "TEXT");
-    addColumn(database, "api_tokens", "request_count", "INTEGER NOT NULL DEFAULT 0");
-    addColumn(database, "api_tokens", "accepted_file_count", "INTEGER NOT NULL DEFAULT 0");
-    addColumn(database, "api_tokens", "accepted_bytes", "INTEGER NOT NULL DEFAULT 0");
-    addColumn(database, "api_tokens", "revoked_at", "TEXT");
-    addColumn(database, "api_tokens", "expires_at", "TEXT");
+    if (current < 2) {
+      addColumn(database, "api_tokens", "application_id", "TEXT");
+      addColumn(database, "api_tokens", "request_count", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(database, "api_tokens", "accepted_file_count", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(database, "api_tokens", "accepted_bytes", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(database, "api_tokens", "revoked_at", "TEXT");
+      addColumn(database, "api_tokens", "expires_at", "TEXT");
 
-    if (columnExists(database, "api_tokens", "upload_count")) {
-      database.run("UPDATE api_tokens SET request_count = upload_count WHERE request_count = 0");
+      if (columnExists(database, "api_tokens", "upload_count")) {
+        database.run("UPDATE api_tokens SET request_count = upload_count WHERE request_count = 0");
+      }
+      if (columnExists(database, "api_tokens", "total_bytes")) {
+        database.run("UPDATE api_tokens SET accepted_bytes = total_bytes WHERE accepted_bytes = 0");
+      }
+      database.run(`
+        UPDATE api_tokens SET accepted_file_count = (
+          SELECT COUNT(*) FROM api_upload_history h
+          WHERE h.token_id = api_tokens.id AND h.status IN ('success','duplicate')
+        ) WHERE accepted_file_count = 0
+      `);
+      database.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_application ON api_tokens(application_id) WHERE application_id IS NOT NULL");
     }
-    if (columnExists(database, "api_tokens", "total_bytes")) {
-      database.run("UPDATE api_tokens SET accepted_bytes = total_bytes WHERE accepted_bytes = 0");
+
+    if (current < 3) {
+      addColumn(database, "api_tokens", "application_id", "TEXT");
+      addColumn(database, "api_tokens", "request_count", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(database, "api_tokens", "accepted_file_count", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(database, "api_tokens", "accepted_bytes", "INTEGER NOT NULL DEFAULT 0");
+      addColumn(database, "api_tokens", "revoked_at", "TEXT");
+      addColumn(database, "api_tokens", "expires_at", "TEXT");
+      if (columnExists(database, "api_tokens", "upload_count")) {
+        database.run("UPDATE api_tokens SET request_count = upload_count WHERE request_count = 0");
+      }
+      if (columnExists(database, "api_tokens", "total_bytes")) {
+        database.run("UPDATE api_tokens SET accepted_bytes = total_bytes WHERE accepted_bytes = 0");
+      }
+      database.run(`
+        UPDATE api_tokens SET accepted_file_count = (
+          SELECT COUNT(*) FROM api_upload_history h
+          WHERE h.token_id = api_tokens.id AND h.status IN ('success','duplicate')
+        ) WHERE accepted_file_count = 0
+      `);
+      addColumn(database, "archives", "organization_id", "TEXT");
+      addColumn(database, "archives", "organization_name", "TEXT");
+      addColumn(database, "archives", "uploader_fingerprint", "TEXT");
+      addColumn(database, "archives", "actor_kind", "TEXT");
+      addColumn(database, "archives", "actor_id_fingerprint", "TEXT");
+      database.run("CREATE INDEX IF NOT EXISTS idx_archives_organization_time ON archives(organization_id, created_at DESC)");
+
+      const revokedAt = new Date().toISOString();
+      database.query(
+        "UPDATE api_tokens SET enabled = 0, revoked_at = COALESCE(revoked_at, ?) WHERE enabled = 1 OR revoked_at IS NULL",
+      ).run(revokedAt);
+      database.run(`
+        INSERT OR IGNORE INTO font_upload_receipts (
+          id, legacy_token_id, actor_kind, actor_fingerprint, organization_id,
+          font_file_id, filename, size, sha256, status, error,
+          client_ip_fingerprint, user_agent, uploaded_at
+        )
+        SELECT
+          id, token_id, 'legacy', substr(token_id, 1, 16), NULL,
+          font_file_id, filename, size, sha256, status, error,
+          client_ip, user_agent, uploaded_at
+        FROM api_upload_history
+      `);
     }
-    database.run(`
-      UPDATE api_tokens SET accepted_file_count = (
-        SELECT COUNT(*) FROM api_upload_history h
-        WHERE h.token_id = api_tokens.id AND h.status IN ('success','duplicate')
-      ) WHERE accepted_file_count = 0
-    `);
-    database.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_application ON api_tokens(application_id) WHERE application_id IS NOT NULL");
     database.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
 }
@@ -244,6 +389,447 @@ export class SqliteDatabase {
 
   close(): void {
     this.raw.close();
+  }
+}
+
+type LoginTransactionRow = {
+  id: string;
+  state_fingerprint: string;
+  sealed_payload: string;
+  return_to: string;
+  created_at: string;
+  expires_at: string;
+  consumed_at: string | null;
+};
+
+type WebSessionRow = {
+  id: string;
+  token_fingerprint: string;
+  user_id: string;
+  display_name: string;
+  picture: string | null;
+  csrf_fingerprint: string;
+  sealed_id_token: string | null;
+  authenticated_at: string;
+  created_at: string;
+  last_seen_at: string;
+  idle_expires_at: string;
+  absolute_expires_at: string;
+  revoked_at: string | null;
+};
+
+type ProgrammaticCredentialRow = {
+  id: string;
+  owner_user_id: string;
+  organization_id: string;
+  organization_name: string;
+  name: string;
+  prefix: string;
+  suffix: string;
+  credential_fingerprint: string;
+  scopes_json: string;
+  generation: number;
+  created_at: string;
+  authorized_at: string;
+  last_used_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+};
+
+type AccessReceiptRow = {
+  id: string;
+  actor_kind: AccessReceipt["actorKind"];
+  actor_fingerprint: string;
+  organization_id: string | null;
+  capability: AccessReceipt["capability"];
+  resource_type: AccessReceipt["resourceType"];
+  resource_fingerprint: string | null;
+  outcome: AccessReceipt["outcome"];
+  created_at: string;
+};
+
+function toLoginTransaction(row: LoginTransactionRow): LoginTransactionRecord {
+  return {
+    id: row.id,
+    stateFingerprint: row.state_fingerprint,
+    sealedPayload: row.sealed_payload,
+    returnTo: row.return_to,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    consumedAt: row.consumed_at,
+  };
+}
+
+function toWebSession(row: WebSessionRow): WebSessionRecord {
+  return {
+    id: row.id,
+    tokenFingerprint: row.token_fingerprint,
+    userId: row.user_id,
+    displayName: row.display_name,
+    picture: row.picture,
+    csrfFingerprint: row.csrf_fingerprint,
+    sealedIdToken: row.sealed_id_token,
+    authenticatedAt: row.authenticated_at,
+    createdAt: row.created_at,
+    lastSeenAt: row.last_seen_at,
+    idleExpiresAt: row.idle_expires_at,
+    absoluteExpiresAt: row.absolute_expires_at,
+    revokedAt: row.revoked_at,
+  };
+}
+
+function parseScopes(value: string): ProgrammaticCredentialRecord["scopes"] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (scope): scope is ProgrammaticCredentialRecord["scopes"][number] =>
+        scope === "fonts.read" ||
+        scope === "fonts.write" ||
+        scope === "subtitles.read" ||
+        scope === "subtitles.write",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function toProgrammaticCredential(
+  row: ProgrammaticCredentialRow,
+): ProgrammaticCredentialRecord {
+  return {
+    id: row.id,
+    ownerUserId: row.owner_user_id,
+    organizationId: row.organization_id,
+    organizationName: row.organization_name,
+    name: row.name,
+    prefix: row.prefix,
+    suffix: row.suffix,
+    credentialFingerprint: row.credential_fingerprint,
+    scopes: parseScopes(row.scopes_json),
+    generation: row.generation,
+    createdAt: row.created_at,
+    authorizedAt: row.authorized_at,
+    lastUsedAt: row.last_used_at,
+    expiresAt: row.expires_at,
+    revokedAt: row.revoked_at,
+  };
+}
+
+function toAccessReceipt(row: AccessReceiptRow): AccessReceipt {
+  return {
+    id: row.id,
+    actorKind: row.actor_kind,
+    actorFingerprint: row.actor_fingerprint,
+    organizationId: row.organization_id,
+    capability: row.capability,
+    resourceType: row.resource_type,
+    resourceFingerprint: row.resource_fingerprint,
+    outcome: row.outcome,
+    createdAt: row.created_at,
+  };
+}
+
+export class SqliteWorkspaceAccessRepository
+  implements WorkspaceAccessRepository
+{
+  constructor(private readonly database: SqliteDatabase) {}
+
+  insertLoginTransaction(record: LoginTransactionRecord): void {
+    this.database.raw.query(`
+      INSERT INTO oidc_login_transactions (
+        id, state_fingerprint, sealed_payload, return_to,
+        created_at, expires_at, consumed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      record.id,
+      record.stateFingerprint,
+      record.sealedPayload,
+      record.returnTo,
+      record.createdAt,
+      record.expiresAt,
+      record.consumedAt,
+    );
+  }
+
+  consumeLoginTransaction(
+    stateFingerprint: string,
+    now: string,
+  ): LoginTransactionRecord | null {
+    return this.database.raw.transaction(() => {
+      const row = this.database.raw.query<LoginTransactionRow, [string, string]>(`
+        SELECT * FROM oidc_login_transactions
+        WHERE state_fingerprint = ? AND consumed_at IS NULL AND expires_at > ?
+      `).get(stateFingerprint, now);
+      if (!row) return null;
+      const result = this.database.raw.query(`
+        UPDATE oidc_login_transactions SET consumed_at = ?
+        WHERE id = ? AND consumed_at IS NULL
+      `).run(now, row.id);
+      return result.changes === 1
+        ? toLoginTransaction({ ...row, consumed_at: now })
+        : null;
+    })();
+  }
+
+  upsertIdentity(identity: OidcWorkspaceIdentity, now: string): void {
+    this.database.raw.query(`
+      INSERT INTO oidc_identities (
+        user_id, issuer, subject, display_name, picture, first_seen_at, last_seen_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET
+        issuer = excluded.issuer,
+        subject = excluded.subject,
+        display_name = excluded.display_name,
+        picture = excluded.picture,
+        last_seen_at = excluded.last_seen_at
+    `).run(
+      identity.userId,
+      identity.issuer,
+      identity.subject,
+      identity.displayName,
+      identity.picture,
+      now,
+      now,
+    );
+  }
+
+  insertSession(record: WebSessionRecord): void {
+    this.database.raw.query(`
+      INSERT INTO web_sessions (
+        id, token_fingerprint, user_id, display_name, picture,
+        csrf_fingerprint, sealed_id_token, authenticated_at, created_at,
+        last_seen_at, idle_expires_at, absolute_expires_at, revoked_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      record.id,
+      record.tokenFingerprint,
+      record.userId,
+      record.displayName,
+      record.picture,
+      record.csrfFingerprint,
+      record.sealedIdToken,
+      record.authenticatedAt,
+      record.createdAt,
+      record.lastSeenAt,
+      record.idleExpiresAt,
+      record.absoluteExpiresAt,
+      record.revokedAt,
+    );
+  }
+
+  findSessionById(id: string): WebSessionRecord | null {
+    const row = this.database.raw
+      .query<WebSessionRow, [string]>("SELECT * FROM web_sessions WHERE id = ?")
+      .get(id);
+    return row ? toWebSession(row) : null;
+  }
+
+  findSessionByFingerprint(fingerprint: string): WebSessionRecord | null {
+    const row = this.database.raw.query<WebSessionRow, [string]>(`
+      SELECT * FROM web_sessions WHERE token_fingerprint = ?
+    `).get(fingerprint);
+    return row ? toWebSession(row) : null;
+  }
+
+  touchSession(id: string, lastSeenAt: string, idleExpiresAt: string): void {
+    this.database.raw.query(`
+      UPDATE web_sessions SET last_seen_at = ?, idle_expires_at = ?
+      WHERE id = ? AND revoked_at IS NULL
+    `).run(lastSeenAt, idleExpiresAt, id);
+  }
+
+  revokeSession(id: string, revokedAt: string): void {
+    this.database.raw.query(`
+      UPDATE web_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?
+    `).run(revokedAt, id);
+  }
+
+  revokeSessionsByUser(userId: string, revokedAt: string): number {
+    return Number(this.database.raw.query(`
+      UPDATE web_sessions SET revoked_at = ?
+      WHERE user_id = ? AND revoked_at IS NULL
+    `).run(revokedAt, userId).changes);
+  }
+
+  findCredentialByPrefix(prefix: string): ProgrammaticCredentialRecord | null {
+    const row = this.database.raw.query<ProgrammaticCredentialRow, [string]>(`
+      SELECT * FROM programmatic_credentials WHERE prefix = ?
+    `).get(prefix);
+    return row ? toProgrammaticCredential(row) : null;
+  }
+
+  insertCredential(record: ProgrammaticCredentialRecord): void {
+    this.database.raw.query(`
+      INSERT INTO programmatic_credentials (
+        id, owner_user_id, organization_id, organization_name, name,
+        prefix, suffix, credential_fingerprint, scopes_json, generation,
+        created_at, authorized_at, last_used_at, expires_at, revoked_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      record.id,
+      record.ownerUserId,
+      record.organizationId,
+      record.organizationName,
+      record.name,
+      record.prefix,
+      record.suffix,
+      record.credentialFingerprint,
+      JSON.stringify(record.scopes),
+      record.generation,
+      record.createdAt,
+      record.authorizedAt,
+      record.lastUsedAt,
+      record.expiresAt,
+      record.revokedAt,
+    );
+  }
+
+  listCredentialsByOwner(userId: string): ProgrammaticCredentialRecord[] {
+    return this.database.raw.query<ProgrammaticCredentialRow, [string]>(`
+      SELECT * FROM programmatic_credentials
+      WHERE owner_user_id = ? ORDER BY created_at DESC
+    `).all(userId).map(toProgrammaticCredential);
+  }
+
+  listCredentials(): ProgrammaticCredentialRecord[] {
+    return this.database.raw.query<ProgrammaticCredentialRow, []>(`
+      SELECT * FROM programmatic_credentials ORDER BY created_at DESC
+    `).all().map(toProgrammaticCredential);
+  }
+
+  countActiveCredentials(
+    userId: string,
+    organizationId: string,
+    now: string,
+  ): { user: number; organization: number } {
+    const user = this.database.raw.query<{ count: number }, [string, string]>(`
+      SELECT COUNT(*) AS count FROM programmatic_credentials
+      WHERE owner_user_id = ? AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > ?)
+    `).get(userId, now)?.count ?? 0;
+    const organization = this.database.raw.query<
+      { count: number },
+      [string, string]
+    >(`
+      SELECT COUNT(*) AS count FROM programmatic_credentials
+      WHERE organization_id = ? AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > ?)
+    `).get(organizationId, now)?.count ?? 0;
+    return { user, organization };
+  }
+
+  consumeCredentialCreationRateLimit(
+    ownerFingerprint: string,
+    hourBucket: string,
+    limit: number,
+  ): boolean {
+    return this.database.raw.transaction(() => {
+      const current = this.database.raw
+        .query<{ count: number }, [string, string]>(`
+          SELECT count FROM credential_creation_rate_limits
+          WHERE owner_fingerprint = ? AND hour_bucket = ?
+        `)
+        .get(ownerFingerprint, hourBucket)?.count ?? 0;
+      if (current >= limit) return false;
+      this.database.raw.query(`
+        INSERT INTO credential_creation_rate_limits (
+          owner_fingerprint, hour_bucket, count
+        ) VALUES (?, ?, 1)
+        ON CONFLICT(owner_fingerprint, hour_bucket)
+        DO UPDATE SET count = count + 1
+      `).run(ownerFingerprint, hourBucket);
+      return true;
+    })();
+  }
+
+  revokeCredential(
+    id: string,
+    revokedAt: string,
+  ): ProgrammaticCredentialRecord | null {
+    this.database.raw.query(`
+      UPDATE programmatic_credentials
+      SET revoked_at = COALESCE(revoked_at, ?)
+      WHERE id = ?
+    `).run(revokedAt, id);
+    const row = this.database.raw.query<ProgrammaticCredentialRow, [string]>(`
+      SELECT * FROM programmatic_credentials WHERE id = ?
+    `).get(id);
+    return row ? toProgrammaticCredential(row) : null;
+  }
+
+  touchCredential(id: string, lastUsedAt: string): void {
+    this.database.raw.query(`
+      UPDATE programmatic_credentials SET last_used_at = ?
+      WHERE id = ? AND revoked_at IS NULL
+    `).run(lastUsedAt, id);
+  }
+
+  insertAccessReceipt(receipt: AccessReceipt): void {
+    this.database.raw.query(`
+      INSERT INTO access_receipts (
+        id, actor_kind, actor_fingerprint, organization_id, capability,
+        resource_type, resource_fingerprint, outcome, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      receipt.id,
+      receipt.actorKind,
+      receipt.actorFingerprint,
+      receipt.organizationId,
+      receipt.capability,
+      receipt.resourceType,
+      receipt.resourceFingerprint,
+      receipt.outcome,
+      receipt.createdAt,
+    );
+  }
+
+  listAccessReceipts(limit: number): AccessReceipt[] {
+    return this.database.raw.query<AccessReceiptRow, [number]>(`
+      SELECT * FROM access_receipts ORDER BY created_at DESC LIMIT ?
+    `).all(limit).map(toAccessReceipt);
+  }
+
+  listAccessReceiptsForActors(
+    actorFingerprints: string[],
+    limit: number,
+  ): AccessReceipt[] {
+    if (actorFingerprints.length === 0) return [];
+    const placeholders = actorFingerprints.map(() => "?").join(", ");
+    return this.database.raw
+      .query<AccessReceiptRow, SQLQueryBindings[]>(`
+        SELECT * FROM access_receipts
+        WHERE actor_fingerprint IN (${placeholders})
+        ORDER BY created_at DESC LIMIT ?
+      `)
+      .all(...actorFingerprints, limit)
+      .map(toAccessReceipt);
+  }
+}
+
+export class SqlitePublicUploadRateLimitRepository {
+  constructor(
+    private readonly database: SqliteDatabase,
+    private readonly requestsPerMinute: number,
+  ) {}
+
+  consumePublicUploadRateLimit(ipHash: string): boolean {
+    const minute = new Date().toISOString().slice(0, 16);
+    return this.database.raw.transaction(() => {
+      const current = this.database.raw
+        .query<{ count: number }, [string, string]>(`
+          SELECT count FROM public_font_upload_rate_limits
+          WHERE ip_hash = ? AND minute_bucket = ?
+        `)
+        .get(ipHash, minute)?.count ?? 0;
+      if (current >= this.requestsPerMinute) return false;
+      this.database.raw.query(`
+        INSERT INTO public_font_upload_rate_limits (ip_hash, minute_bucket, count)
+        VALUES (?, ?, 1)
+        ON CONFLICT(ip_hash, minute_bucket) DO UPDATE SET count = count + 1
+      `).run(ipHash, minute);
+      return true;
+    })();
   }
 }
 
@@ -461,6 +1047,11 @@ interface ArchiveRow {
   sub_entries_json: string;
   created_at: string;
   updated_at: string;
+  organization_id: string | null;
+  organization_name: string | null;
+  uploader_fingerprint: string | null;
+  actor_kind: ArchiveRecord["actor_kind"];
+  actor_id_fingerprint: string | null;
 }
 
 function parseStringArray(value: string): string[] {
@@ -494,6 +1085,11 @@ function toArchiveRecord(row: ArchiveRow): ArchiveRecord {
     sub_entries: parseStringArray(row.sub_entries_json),
     created_at: row.created_at,
     updated_at: row.updated_at,
+    organization_id: row.organization_id,
+    organization_name: row.organization_name,
+    uploader_fingerprint: row.uploader_fingerprint,
+    actor_kind: row.actor_kind,
+    actor_id_fingerprint: row.actor_id_fingerprint,
   };
 }
 
@@ -506,6 +1102,14 @@ export class SqliteArchiveRepository implements ArchiveRepository {
 
   listPending(): ArchiveRecord[] {
     return this.database.raw.query<ArchiveRow, []>("SELECT * FROM archives WHERE status = 'pending' ORDER BY created_at DESC").all().map(toArchiveRecord);
+  }
+
+  listByOrganization(organizationId: string): ArchiveRecord[] {
+    return this.database.raw.query<ArchiveRow, [string]>(`
+      SELECT * FROM archives
+      WHERE organization_id = ?
+      ORDER BY created_at DESC
+    `).all(organizationId).map(toArchiveRecord);
   }
 
   findById(id: string): ArchiveRecord | null {
@@ -523,14 +1127,19 @@ export class SqliteArchiveRepository implements ArchiveRepository {
       INSERT INTO archives (
         id, name_cn, letter, season, sub_group, languages_json, subtitle_formats_json,
         episode_count, has_fonts, filename, storage_key, file_size, file_count,
-        pending_path, status, contributor, sub_entries_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        pending_path, status, contributor, sub_entries_json, created_at, updated_at,
+        organization_id, organization_name, uploader_fingerprint, actor_kind,
+        actor_id_fingerprint
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id, record.name_cn, record.letter, record.season, record.sub_group,
       JSON.stringify(record.languages), JSON.stringify(record.subtitle_formats), record.episode_count,
       Number(record.has_fonts), record.filename, record.r2_key, record.file_size, record.file_count,
       record.pending_path, record.status, record.contributor, JSON.stringify(record.sub_entries),
       record.created_at, record.updated_at,
+      record.organization_id, record.organization_name,
+      record.uploader_fingerprint, record.actor_kind,
+      record.actor_id_fingerprint,
     );
   }
 
@@ -543,6 +1152,9 @@ export class SqliteArchiveRepository implements ArchiveRepository {
       ["r2_key", "storage_key", identity], ["file_size", "file_size", identity], ["file_count", "file_count", identity],
       ["pending_path", "pending_path", identity], ["status", "status", identity], ["contributor", "contributor", identity],
       ["sub_entries", "sub_entries_json", (value) => JSON.stringify(value)], ["updated_at", "updated_at", identity],
+      ["organization_id", "organization_id", identity], ["organization_name", "organization_name", identity],
+      ["uploader_fingerprint", "uploader_fingerprint", identity], ["actor_kind", "actor_kind", identity],
+      ["actor_id_fingerprint", "actor_id_fingerprint", identity],
     ];
     const assignments: string[] = [];
     const values: SQLQueryBindings[] = [];
@@ -600,246 +1212,6 @@ function identity(value: ArchiveRecord[keyof ArchiveRecord] | undefined): SQLQue
   if (value === undefined) return null;
   if (Array.isArray(value)) return JSON.stringify(value);
   return value;
-}
-
-interface ApiTokenRow {
-  id: string; application_id: string | null; name: string; prefix: string; token_hash: string; enabled: number; note: string | null;
-  request_count: number; accepted_file_count: number; accepted_bytes: number; last_used_at: string | null; last_used_ip: string | null;
-  created_at: string; revoked_at: string | null; expires_at: string | null;
-}
-
-interface ApiTokenApplicationRow {
-  id: string; applicant_name: string; contact: string; purpose: string; expected_volume: string | null;
-  status: ApiTokenApplicationStatus; credential_prefix: string; credential_hash: string; public_note: string | null;
-  admin_note: string | null; request_ip_hash: string; token_id: string | null; created_at: string; updated_at: string;
-  reviewed_at: string | null; claimed_at: string | null;
-}
-
-const TOKEN_COLUMNS = `id, application_id, name, prefix, token_hash, enabled, note, request_count, accepted_file_count,
-  accepted_bytes, last_used_at, last_used_ip, created_at, revoked_at, expires_at`;
-
-function toToken(row: ApiTokenRow): ApiTokenRecord {
-  return {
-    id: row.id, application_id: row.application_id, name: row.name, prefix: row.prefix, token_hash: row.token_hash,
-    enabled: row.enabled === 1, note: row.note, request_count: row.request_count, accepted_file_count: row.accepted_file_count,
-    accepted_bytes: row.accepted_bytes, last_used_at: row.last_used_at, last_used_ip: row.last_used_ip,
-    created_at: row.created_at, revoked_at: row.revoked_at, expires_at: row.expires_at,
-  };
-}
-
-function toApplication(row: ApiTokenApplicationRow): ApiTokenApplicationRecord {
-  return { ...row };
-}
-
-function toApplicationAdmin(row: ApiTokenApplicationRow) {
-  const { credential_hash: _hash, ...view } = row;
-  return view;
-}
-
-export class SqliteUploadAccessRepository implements UploadAccessRepository {
-  constructor(private readonly database: SqliteDatabase) {}
-
-  listTokens(): ApiTokenRecord[] {
-    return this.database.raw.query<ApiTokenRow, []>(`SELECT ${TOKEN_COLUMNS} FROM api_tokens ORDER BY created_at DESC`).all().map(toToken);
-  }
-
-  findTokenById(id: string): ApiTokenRecord | null {
-    const row = this.database.raw.query<ApiTokenRow, [string]>(`SELECT ${TOKEN_COLUMNS} FROM api_tokens WHERE id = ?`).get(id);
-    return row ? toToken(row) : null;
-  }
-
-  findTokenByPrefix(prefix: string): ApiTokenRecord | null {
-    const row = this.database.raw.query<ApiTokenRow, [string]>(`SELECT ${TOKEN_COLUMNS} FROM api_tokens WHERE prefix = ?`).get(prefix);
-    return row ? toToken(row) : null;
-  }
-
-  insertToken(record: ApiTokenRecord): void {
-    this.database.raw.query(`
-      INSERT INTO api_tokens (
-        id, application_id, name, prefix, token_hash, enabled, note, request_count, accepted_file_count,
-        accepted_bytes, last_used_at, last_used_ip, created_at, revoked_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      record.id, record.application_id, record.name, record.prefix, record.token_hash, Number(record.enabled), record.note,
-      record.request_count, record.accepted_file_count, record.accepted_bytes, record.last_used_at, record.last_used_ip,
-      record.created_at, record.revoked_at, record.expires_at,
-    );
-  }
-
-  updateToken(id: string, patch: UpdateApiToken): ApiTokenRecord | null {
-    const assignments: string[] = [];
-    const values: SQLQueryBindings[] = [];
-    if (patch.name !== undefined) { assignments.push("name = ?"); values.push(patch.name.trim()); }
-    if (patch.note !== undefined) { assignments.push("note = ?"); values.push(patch.note?.trim() || null); }
-    if (patch.expires_at !== undefined) { assignments.push("expires_at = ?"); values.push(patch.expires_at); }
-    if (patch.enabled !== undefined) {
-      assignments.push("enabled = ?", "revoked_at = ?");
-      values.push(Number(patch.enabled), patch.enabled ? null : new Date().toISOString());
-    }
-    if (!assignments.length) return this.findTokenById(id);
-    const changed = this.database.raw.query(`UPDATE api_tokens SET ${assignments.join(", ")} WHERE id = ?`).run(...values, id).changes;
-    return changed ? this.findTokenById(id) : null;
-  }
-
-  revokeToken(id: string): ApiTokenRecord | null {
-    const now = new Date().toISOString();
-    const changed = this.database.raw.query("UPDATE api_tokens SET enabled = 0, revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
-      .run(now, id).changes;
-    return changed ? this.findTokenById(id) : null;
-  }
-
-  insertApplication(record: ApiTokenApplicationRecord): void {
-    this.database.raw.query(`
-      INSERT INTO api_token_applications (
-        id, applicant_name, contact, purpose, expected_volume, status, credential_prefix, credential_hash,
-        public_note, admin_note, request_ip_hash, token_id, created_at, updated_at, reviewed_at, claimed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      record.id, record.applicant_name, record.contact, record.purpose, record.expected_volume, record.status,
-      record.credential_prefix, record.credential_hash, record.public_note, record.admin_note, record.request_ip_hash,
-      record.token_id, record.created_at, record.updated_at, record.reviewed_at, record.claimed_at,
-    );
-  }
-
-  findApplicationById(id: string): ApiTokenApplicationRecord | null {
-    const row = this.database.raw.query<ApiTokenApplicationRow, [string]>("SELECT * FROM api_token_applications WHERE id = ?").get(id);
-    return row ? toApplication(row) : null;
-  }
-
-  findApplicationByCredentialPrefix(prefix: string): ApiTokenApplicationRecord | null {
-    const row = this.database.raw.query<ApiTokenApplicationRow, [string]>("SELECT * FROM api_token_applications WHERE credential_prefix = ?").get(prefix);
-    return row ? toApplication(row) : null;
-  }
-
-  listApplications(query: { status?: ApiTokenApplicationStatus; page: number; limit: number }): ApiTokenApplicationList {
-    const where = query.status ? "WHERE status = ?" : "";
-    const parameters: SQLQueryBindings[] = query.status ? [query.status] : [];
-    const total = this.database.raw.query<{ count: number }, SQLQueryBindings[]>(`SELECT COUNT(*) AS count FROM api_token_applications ${where}`)
-      .get(...parameters)?.count ?? 0;
-    const rows = this.database.raw.query<ApiTokenApplicationRow, SQLQueryBindings[]>(`
-      SELECT * FROM api_token_applications ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?
-    `).all(...parameters, query.limit, (query.page - 1) * query.limit);
-    return { total, page: query.page, limit: query.limit, data: rows.map(toApplicationAdmin) };
-  }
-
-  reviewApplication(id: string, input: ReviewApiTokenApplication, reviewedAt: string): ApiTokenApplicationRecord | null {
-    const status = input.decision === "approve" ? "approved" : "rejected";
-    const changed = this.database.raw.query(`
-      UPDATE api_token_applications SET status = ?, public_note = ?, admin_note = ?, reviewed_at = ?, updated_at = ?
-      WHERE id = ? AND status = 'pending'
-    `).run(status, input.public_note?.trim() || null, input.admin_note?.trim() || null, reviewedAt, reviewedAt, id).changes;
-    return changed ? this.findApplicationById(id) : null;
-  }
-
-  claimApplication(id: string, token: ApiTokenRecord, claimedAt: string): { application: ApiTokenApplicationRecord; token: ApiTokenRecord } | null {
-    return this.database.raw.transaction(() => {
-      const application = this.findApplicationById(id);
-      if (!application || application.status !== "approved" || application.token_id) return null;
-      this.insertToken(token);
-      const changed = this.database.raw.query(`
-        UPDATE api_token_applications SET status = 'claimed', token_id = ?, claimed_at = ?, updated_at = ?
-        WHERE id = ? AND status = 'approved' AND token_id IS NULL
-      `).run(token.id, claimedAt, claimedAt, id).changes;
-      if (!changed) throw new Error("Application claim race");
-      const claimed = this.findApplicationById(id);
-      return claimed ? { application: claimed, token } : null;
-    })();
-  }
-
-  consumeApplicationRateLimit(ipHash: string, date: string, limit: number): boolean {
-    return this.database.raw.transaction(() => {
-      const current = this.database.raw.query<{ count: number }, [string, string]>(
-        "SELECT count FROM api_application_rate_limits WHERE ip_hash = ? AND application_date = ?",
-      ).get(ipHash, date)?.count ?? 0;
-      if (current >= limit) return false;
-      this.database.raw.query(`
-        INSERT INTO api_application_rate_limits (ip_hash, application_date, count) VALUES (?, ?, 1)
-        ON CONFLICT(ip_hash, application_date) DO UPDATE SET count = count + 1
-      `).run(ipHash, date);
-      return true;
-    })();
-  }
-
-  consumePublicUploadRateLimit(ipHash: string, minute: string, limit: number): boolean {
-    return this.database.raw.transaction(() => {
-      const current = this.database.raw.query<{ count: number }, [string, string]>(
-        "SELECT count FROM public_font_upload_rate_limits WHERE ip_hash = ? AND minute_bucket = ?",
-      ).get(ipHash, minute)?.count ?? 0;
-      if (current >= limit) return false;
-      this.database.raw.query(`
-        INSERT INTO public_font_upload_rate_limits (ip_hash, minute_bucket, count) VALUES (?, ?, 1)
-        ON CONFLICT(ip_hash, minute_bucket) DO UPDATE SET count = count + 1
-      `).run(ipHash, minute);
-      return true;
-    })();
-  }
-
-  recordSubmission(tokenId: string, results: ApiUploadResult[], context: UploadRequestContext, uploadedAt: string): void {
-    const accepted = results.filter((result) => result.status === "success" || result.status === "duplicate");
-    const acceptedBytes = accepted.reduce((total, result) => total + result.size, 0);
-    const insert = this.database.raw.query(`
-      INSERT INTO api_upload_history (id, token_id, font_file_id, filename, size, sha256, status, error, client_ip, user_agent, uploaded_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    this.database.raw.transaction(() => {
-      for (const result of results) {
-        insert.run(
-          crypto.randomUUID(), tokenId, result.font_id, result.filename, result.size, result.sha256, result.status,
-          result.error, context.clientIp, context.userAgent, uploadedAt,
-        );
-      }
-      this.database.raw.query(`
-        UPDATE api_tokens SET request_count = request_count + 1,
-          accepted_file_count = accepted_file_count + ?, accepted_bytes = accepted_bytes + ?,
-          last_used_at = ?, last_used_ip = ? WHERE id = ?
-      `).run(accepted.length, acceptedBytes, uploadedAt, context.clientIp, tokenId);
-    })();
-  }
-
-  listHistory(query: { tokenId?: string; status?: ApiUploadStatus; page: number; limit: number }): ApiHistoryResponse {
-    const conditions: string[] = [];
-    const parameters: SQLQueryBindings[] = [];
-    if (query.tokenId) { conditions.push("token_id = ?"); parameters.push(query.tokenId); }
-    if (query.status) { conditions.push("status = ?"); parameters.push(query.status); }
-    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const total = this.database.raw.query<{ count: number }, SQLQueryBindings[]>(`SELECT COUNT(*) AS count FROM api_upload_history ${where}`).get(...parameters)?.count ?? 0;
-    const data = this.database.raw.query<ApiUploadHistoryItem, SQLQueryBindings[]>(`
-      SELECT * FROM api_upload_history ${where} ORDER BY uploaded_at DESC LIMIT ? OFFSET ?
-    `).all(...parameters, query.limit, (query.page - 1) * query.limit);
-    return { total, page: query.page, limit: query.limit, data };
-  }
-
-  stats(): ApiTokenStats {
-    const now = new Date().toISOString();
-    const tokenTotals = this.database.raw.query<{
-      tokens: number; active: number; requests: number; accepted_files: number; bytes: number;
-    }, [string]>(`
-      SELECT COUNT(*) AS tokens,
-        COALESCE(SUM(CASE WHEN enabled = 1 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) THEN 1 ELSE 0 END), 0) AS active,
-        COALESCE(SUM(request_count), 0) AS requests,
-        COALESCE(SUM(accepted_file_count), 0) AS accepted_files,
-        COALESCE(SUM(accepted_bytes), 0) AS bytes
-      FROM api_tokens
-    `).get(now) ?? { tokens: 0, active: 0, requests: 0, accepted_files: 0, bytes: 0 };
-    const pendingApplications = this.database.raw.query<{ count: number }, []>(
-      "SELECT COUNT(*) AS count FROM api_token_applications WHERE status = 'pending'",
-    ).get()?.count ?? 0;
-    const byStatus = { success: 0, duplicate: 0, rejected: 0, error: 0 };
-    for (const row of this.database.raw.query<{ status: ApiUploadStatus; count: number }, []>(
-      "SELECT status, COUNT(*) AS count FROM api_upload_history GROUP BY status",
-    ).all()) byStatus[row.status] = row.count;
-    return {
-      totals: {
-        tokens: tokenTotals.tokens,
-        active: tokenTotals.active,
-        pendingApplications,
-        requests: tokenTotals.requests,
-        acceptedFiles: tokenTotals.accepted_files,
-        bytes: tokenTotals.bytes,
-      },
-      byStatus,
-    };
-  }
 }
 
 interface ProcessingRow {

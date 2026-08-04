@@ -296,7 +296,7 @@ function handleClose() {
                   v-model="uploadForm.season"
                   class="w-full px-3 py-2.5 rounded-xl border border-ink-200 text-sm bg-surface focus:outline-none focus:ring-2 focus:ring-sakura-300/50 focus:border-sakura-300 transition-colors duration-150"
                 >
-                  <option v-for="s in SEASON_OPTIONS" :key="s" :value="s">{{ s }}</option>
+                  <option v-for="s in SEASON_OPTIONS" :key="s" :value="s">{{ s === '合集' ? t('sharingSeasonCollection') : s }}</option>
                 </select>
               </div>
               <div class="flex-1 relative">
