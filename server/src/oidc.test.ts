@@ -52,6 +52,7 @@ async function mockIssuer(mode: FailureMode) {
   let issuer = "";
   let expectedNonce = "";
   let expectedChallenge = "";
+  let tokenRedirectUri = "";
   const clientId = "fontinass-test-client";
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -82,6 +83,7 @@ async function mockIssuer(mode: FailureMode) {
       }
       if (url.pathname === "/token") {
         const form = new URLSearchParams(await request.text());
+        tokenRedirectUri = form.get("redirect_uri") ?? "";
         const verifier = form.get("code_verifier") ?? "";
         const challenge = createHash("sha256")
           .update(verifier)
@@ -129,6 +131,7 @@ async function mockIssuer(mode: FailureMode) {
       expectedNonce = input.nonce;
       expectedChallenge = input.challenge;
     },
+    tokenRedirectUri: () => tokenRedirectUri,
   };
 }
 
@@ -209,13 +212,20 @@ async function flow(mode: FailureMode) {
     nonce: authorizationUrl.searchParams.get("nonce") ?? "",
     challenge: authorizationUrl.searchParams.get("code_challenge") ?? "",
   });
-  const callback = new URL(redirectUri);
+  const callback = new URL("http://127.0.0.1:3000/api/auth/callback");
   callback.searchParams.set("code", "authorization-code");
   callback.searchParams.set(
     "state",
     authorizationUrl.searchParams.get("state") ?? "",
   );
-  return { ...state, bff, authorizationUrl, callback };
+  return {
+    ...state,
+    bff,
+    authorizationUrl,
+    callback,
+    redirectUri,
+    tokenRedirectUri: mock.tokenRedirectUri,
+  };
 }
 
 describe("OidcBff", () => {
@@ -227,6 +237,7 @@ describe("OidcBff", () => {
       expect(state.authorizationUrl.searchParams.get("nonce")).toBeTruthy();
 
       const result = await state.bff.callback(state.callback);
+      expect(state.tokenRedirectUri()).toBe(state.redirectUri);
       expect(result.returnTo).toBe("/workspace");
       expect(result.principal).toMatchObject({
         kind: "session",

@@ -61,10 +61,12 @@ export class OidcBff {
     }
     const transaction = this.access.consumeLogin(state);
     const configuration = await this.configuration();
+    const canonicalCallbackUrl = new URL(this.config.redirectUri);
+    canonicalCallbackUrl.search = currentUrl.search;
 
     let tokens: oidc.TokenEndpointResponse & oidc.TokenEndpointResponseHelpers;
     try {
-      tokens = await oidc.authorizationCodeGrant(configuration, currentUrl, {
+      tokens = await oidc.authorizationCodeGrant(configuration, canonicalCallbackUrl, {
         pkceCodeVerifier: transaction.codeVerifier,
         expectedState: state,
         expectedNonce: transaction.nonce,
