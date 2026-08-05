@@ -1,8 +1,5 @@
-import type {
-  ApiUploadResponse,
-  ApiUploadResult,
-  WorkspacePrincipal,
-} from "@fontinass/contracts";
+import type { ApiUploadResponse, ApiUploadResult } from "@fontinass/contracts";
+import type { ApiTokenRecord, UploadRequestContext } from "@fontinass/access-control";
 import type { FontContributionResult } from "@fontinass/font-catalog";
 
 export interface SubmittedFont {
@@ -10,29 +7,10 @@ export interface SubmittedFont {
   bytes: Uint8Array;
 }
 
-export interface UploadRequestContext {
-  clientIp: string | null;
-  userAgent: string | null;
-}
-
-export interface PublicUploadRateLimitPort {
+export interface UploadAccessPort {
+  authenticate(plaintext: string): ApiTokenRecord | null;
   consumePublicUploadRateLimit(ipHash: string): boolean;
-}
-
-export interface WorkspaceSubmissionAccessPort {
-  authorize(
-    principal: WorkspacePrincipal,
-    capability: "fonts.write",
-    organizationId: string,
-  ): void;
-  recordAccess(input: {
-    principal: WorkspacePrincipal;
-    capability: "fonts.write";
-    organizationId: string;
-    resourceType: "font";
-    resourceId: string | null;
-    outcome: "completed";
-  }): void;
+  recordSubmission(tokenId: string, results: ApiUploadResult[], context: UploadRequestContext): void;
 }
 
 export interface FontContributionCatalog {
@@ -57,8 +35,7 @@ export class FontSubmissionError extends Error {
 
 export class FontSubmission {
   constructor(
-    private readonly publicRateLimits: PublicUploadRateLimitPort,
-    private readonly workspaceAccess: WorkspaceSubmissionAccessPort,
+    private readonly access: UploadAccessPort,
     private readonly catalog: FontContributionCatalog,
     private readonly options: FontSubmissionOptions,
   ) {}
@@ -69,35 +46,23 @@ export class FontSubmission {
     rateLimitKey: string;
   }): Promise<ApiUploadResponse> {
     this.validatePublicBatch(input.files);
-    if (!this.publicRateLimits.consumePublicUploadRateLimit(input.rateLimitKey)) {
+    if (!this.access.consumePublicUploadRateLimit(input.rateLimitKey)) {
       throw new FontSubmissionError("Public upload request rate limit exceeded", "rate_limited");
     }
     return this.contribute(input.files);
   }
 
-  async submitAuthorized(input: {
-    principal: WorkspacePrincipal;
-    organizationId: string;
+  async submitCredentialed(input: {
+    credential: string;
     files: SubmittedFont[];
+    context: UploadRequestContext;
   }): Promise<ApiUploadResponse> {
-    this.workspaceAccess.authorize(
-      input.principal,
-      "fonts.write",
-      input.organizationId,
-    );
+    const token = this.access.authenticate(input.credential.trim());
+    if (!token) throw new FontSubmissionError("Invalid or inactive upload credential", "invalid_token");
     if (!input.files.length) throw new FontSubmissionError("No font files provided", "empty");
 
     const response = await this.contribute(input.files);
-    for (const result of response.results) {
-      this.workspaceAccess.recordAccess({
-        principal: input.principal,
-        capability: "fonts.write",
-        organizationId: input.organizationId,
-        resourceType: "font",
-        resourceId: result.font_id,
-        outcome: "completed",
-      });
-    }
+    this.access.recordSubmission(token.id, response.results, input.context);
     return response;
   }
 

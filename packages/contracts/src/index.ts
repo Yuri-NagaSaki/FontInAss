@@ -28,7 +28,7 @@ export type OkResponse = z.infer<typeof OkResponseSchema>;
 
 export const HealthResponseSchema = z.object({
   status: z.enum(["ok", "error"]),
-  version: z.literal(3),
+  version: z.literal(2),
 });
 export type HealthResponse = z.infer<typeof HealthResponseSchema>;
 
@@ -342,9 +342,131 @@ export const LogStatsSchema = z.object({
 });
 export type LogStats = z.infer<typeof LogStatsSchema>;
 
-// Font submission result contracts shared by public and authenticated uploads.
+// Upload access applications, credentials and submission audit contracts.
+export const ApiTokenApplicationStatusSchema = z.enum(["pending", "approved", "rejected", "claimed"]);
+export type ApiTokenApplicationStatus = z.infer<typeof ApiTokenApplicationStatusSchema>;
+
+export const ApiTokenApplicationSchema = z.object({
+  id: z.string(),
+  applicant_name: z.string(),
+  contact: z.string(),
+  purpose: z.string(),
+  expected_volume: z.string().nullable(),
+  status: ApiTokenApplicationStatusSchema,
+  credential_prefix: z.string(),
+  public_note: z.string().nullable(),
+  token_id: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+  reviewed_at: z.string().nullable(),
+  claimed_at: z.string().nullable(),
+});
+export type ApiTokenApplication = z.infer<typeof ApiTokenApplicationSchema>;
+
+export const ApiTokenApplicationAdminSchema = ApiTokenApplicationSchema.extend({
+  admin_note: z.string().nullable(),
+  request_ip_hash: z.string(),
+});
+export type ApiTokenApplicationAdmin = z.infer<typeof ApiTokenApplicationAdminSchema>;
+
+export const CreateApiTokenApplicationSchema = z.object({
+  applicant_name: z.string().trim().min(1).max(100),
+  contact: z.string().trim().min(3).max(200),
+  purpose: z.string().trim().min(10).max(1000),
+  expected_volume: z.string().trim().max(200).optional(),
+});
+export type CreateApiTokenApplication = z.infer<typeof CreateApiTokenApplicationSchema>;
+
+export const ReviewApiTokenApplicationSchema = z.object({
+  decision: z.enum(["approve", "reject"]),
+  public_note: z.string().trim().max(500).nullable().optional(),
+  admin_note: z.string().trim().max(500).nullable().optional(),
+});
+export type ReviewApiTokenApplication = z.infer<typeof ReviewApiTokenApplicationSchema>;
+
+export const ApiTokenApplicationListQuerySchema = PaginationQuerySchema.extend({
+  status: ApiTokenApplicationStatusSchema.optional(),
+});
+export const ApiTokenApplicationListSchema = PaginationQuerySchema.extend({
+  total: z.number().int().nonnegative(),
+  data: z.array(ApiTokenApplicationAdminSchema),
+});
+export type ApiTokenApplicationList = z.infer<typeof ApiTokenApplicationListSchema>;
+
+export const ApiTokenApplicationSecretSchema = z.object({
+  secret: z.string().trim().min(40).max(200),
+});
+export type ApiTokenApplicationSecret = z.infer<typeof ApiTokenApplicationSecretSchema>;
+
+export const ApiTokenSchema = z.object({
+  id: z.string(),
+  application_id: z.string().nullable(),
+  name: z.string(),
+  prefix: z.string(),
+  enabled: z.boolean(),
+  note: z.string().nullable(),
+  request_count: z.number().int().nonnegative(),
+  accepted_file_count: z.number().int().nonnegative(),
+  accepted_bytes: z.number().int().nonnegative(),
+  last_used_at: z.string().nullable(),
+  last_used_ip: z.string().nullable(),
+  created_at: z.string(),
+  revoked_at: z.string().nullable(),
+  expires_at: z.string().nullable(),
+});
+export type ApiToken = z.infer<typeof ApiTokenSchema>;
+
+export const CreateApiTokenSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  note: z.string().trim().max(500).optional(),
+  enabled: z.boolean().default(true),
+  expires_at: z.string().datetime().nullable().optional(),
+});
+export const UpdateApiTokenSchema = CreateApiTokenSchema.partial().extend({
+  note: z.string().trim().max(500).nullable().optional(),
+});
+export type CreateApiToken = z.infer<typeof CreateApiTokenSchema>;
+export type UpdateApiToken = z.infer<typeof UpdateApiTokenSchema>;
+
 export const ApiUploadStatusSchema = z.enum(["success", "duplicate", "rejected", "error"]);
 export type ApiUploadStatus = z.infer<typeof ApiUploadStatusSchema>;
+export const ApiUploadHistoryItemSchema = z.object({
+  id: z.string(), token_id: z.string(), font_file_id: z.string().nullable(), filename: z.string(),
+  size: z.number().int().nonnegative(), sha256: z.string().nullable(), status: ApiUploadStatusSchema,
+  error: z.string().nullable(), client_ip: z.string().nullable(), user_agent: z.string().nullable(), uploaded_at: z.string(),
+});
+export type ApiUploadHistoryItem = z.infer<typeof ApiUploadHistoryItemSchema>;
+
+export const ApiHistoryQuerySchema = PaginationQuerySchema.extend({
+  status: ApiUploadStatusSchema.optional(),
+  tokenId: z.string().optional(),
+});
+export const ApiHistoryResponseSchema = PaginationQuerySchema.extend({
+  total: z.number().int().nonnegative(),
+  data: z.array(ApiUploadHistoryItemSchema),
+  token: ApiTokenSchema.optional(),
+});
+export type ApiHistoryResponse = z.infer<typeof ApiHistoryResponseSchema>;
+
+export const ApiTokenStatsSchema = z.object({
+  totals: z.object({
+    tokens: z.number().int().nonnegative(),
+    active: z.number().int().nonnegative(),
+    pendingApplications: z.number().int().nonnegative(),
+    requests: z.number().int().nonnegative(),
+    acceptedFiles: z.number().int().nonnegative(),
+    bytes: z.number().int().nonnegative(),
+  }),
+  byStatus: z.record(ApiUploadStatusSchema, z.number().int().nonnegative()),
+});
+export type ApiTokenStats = z.infer<typeof ApiTokenStatsSchema>;
+
+export const FontAccessSessionSchema = z.object({
+  role: z.enum(["admin", "member"]),
+  name: z.string(),
+  prefix: z.string().nullable(),
+});
+export type FontAccessSession = z.infer<typeof FontAccessSessionSchema>;
 
 export const PublicFontUploadPolicySchema = z.object({
   max_files: z.number().int().positive(),
@@ -370,200 +492,14 @@ export const ApiUploadResponseSchema = z.object({
 });
 export type ApiUploadResponse = z.infer<typeof ApiUploadResponseSchema>;
 
-// AniBT OIDC member workspace contracts.
-export const FONTINASS_ENTITLEMENT_VERSION = 1 as const;
-
-export const FontInAssAccountStatusSchema = z.enum([
-  "active",
-  "disabled",
-  "banned",
-  "deleted",
-]);
-export type FontInAssAccountStatus = z.infer<
-  typeof FontInAssAccountStatusSchema
->;
-
-export const FontInAssOrganizationRoleSchema = z.enum([
-  "owner",
-  "admin",
-  "member",
-]);
-export type FontInAssOrganizationRole = z.infer<
-  typeof FontInAssOrganizationRoleSchema
->;
-
-export const FontInAssOrganizationEntitlementSchema = z.object({
-  organizationId: z.string().min(1).max(128),
-  slug: z.string().min(1).max(80),
-  name: z.string().min(1).max(80),
-  role: FontInAssOrganizationRoleSchema,
-});
-export type FontInAssOrganizationEntitlement = z.infer<
-  typeof FontInAssOrganizationEntitlementSchema
->;
-
-export const FontInAssEntitlementResponseSchema = z.object({
-  version: z.literal(FONTINASS_ENTITLEMENT_VERSION),
-  accountStatus: FontInAssAccountStatusSchema,
-  organizations: z.array(FontInAssOrganizationEntitlementSchema).max(200),
-  canManage: z.boolean(),
-  checkedAt: z.number().int().nonnegative(),
-});
-export type FontInAssEntitlementResponse = z.infer<
-  typeof FontInAssEntitlementResponseSchema
->;
-
-export const WorkspaceCapabilitySchema = z.enum([
-  "fonts.read",
-  "fonts.write",
-  "fonts.delete",
-  "subtitles.read",
-  "subtitles.write",
-  "archives.manage",
-  "credentials.manage",
-  "credentials.admin",
-  "system.manage",
-]);
-export type WorkspaceCapability = z.infer<typeof WorkspaceCapabilitySchema>;
-
-export const ProgrammaticCredentialScopeSchema = z.enum([
-  "fonts.read",
-  "fonts.write",
-  "subtitles.read",
-  "subtitles.write",
-]);
-export type ProgrammaticCredentialScope = z.infer<
-  typeof ProgrammaticCredentialScopeSchema
->;
-
-export const OidcWorkspaceIdentitySchema = z.object({
-  issuer: z.string().url(),
-  subject: z.string().min(1).max(255),
-  userId: z.string().min(1).max(128),
-  displayName: z.string().min(1).max(200),
-  picture: z.string().url().nullable(),
-});
-export type OidcWorkspaceIdentity = z.infer<
-  typeof OidcWorkspaceIdentitySchema
->;
-
-export const WorkspaceSessionSchema = z.object({
-  authenticated: z.literal(true),
-  displayName: z.string(),
-  picture: z.string().nullable(),
-  organizations: z.array(FontInAssOrganizationEntitlementSchema),
-  canManage: z.boolean(),
-  csrfToken: z.string().min(32),
-  authenticatedAt: z.string().datetime(),
-  expiresAt: z.string().datetime(),
-});
-export type WorkspaceSession = z.infer<typeof WorkspaceSessionSchema>;
-
-export const AnonymousWorkspaceSessionSchema = z.object({
-  authenticated: z.literal(false),
-});
-export const WorkspaceSessionResponseSchema = z.discriminatedUnion(
-  "authenticated",
-  [AnonymousWorkspaceSessionSchema, WorkspaceSessionSchema],
-);
-export type WorkspaceSessionResponse = z.infer<
-  typeof WorkspaceSessionResponseSchema
->;
-
-export const WorkspacePrincipalSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("session"),
-    actorId: z.string(),
-    userId: z.string(),
-    displayName: z.string(),
-    picture: z.string().nullable(),
-    organizations: z.array(FontInAssOrganizationEntitlementSchema),
-    canManage: z.boolean(),
-    authenticatedAt: z.string().datetime(),
-    expiresAt: z.string().datetime(),
-    csrfToken: z.string(),
-  }),
-  z.object({
-    kind: z.literal("credential"),
-    actorId: z.string(),
-    ownerUserId: z.string(),
-    organizationId: z.string(),
-    organizationName: z.string(),
-    scopes: z.array(ProgrammaticCredentialScopeSchema),
-  }),
-  z.object({
-    kind: z.literal("operator"),
-    actorId: z.string(),
-  }),
-]);
-export type WorkspacePrincipal = z.infer<typeof WorkspacePrincipalSchema>;
-
-export const ProgrammaticCredentialSchema = z.object({
-  id: z.string(),
-  organizationId: z.string(),
-  organizationName: z.string(),
-  name: z.string(),
-  prefix: z.string(),
-  suffix: z.string(),
-  scopes: z.array(ProgrammaticCredentialScopeSchema),
-  generation: z.number().int().positive(),
-  createdAt: z.string().datetime(),
-  authorizedAt: z.string().datetime(),
-  lastUsedAt: z.string().datetime().nullable(),
-  expiresAt: z.string().datetime().nullable(),
-  revokedAt: z.string().datetime().nullable(),
-});
-export type ProgrammaticCredential = z.infer<
-  typeof ProgrammaticCredentialSchema
->;
-
-export const CreateProgrammaticCredentialSchema = z.object({
-  organizationId: z.string().min(1).max(128),
-  name: z.string().trim().min(1).max(100),
-  scopes: z
-    .array(ProgrammaticCredentialScopeSchema)
-    .min(1)
-    .max(4)
-    .transform((scopes) => [...new Set(scopes)]),
-  expiresAt: z.string().datetime().nullable().optional(),
-  confirmation: z.string().trim().min(1).max(100),
-});
-export type CreateProgrammaticCredential = z.infer<
-  typeof CreateProgrammaticCredentialSchema
->;
-
-export const ProgrammaticCredentialCreatedSchema = z.object({
-  credential: ProgrammaticCredentialSchema,
-  plaintext: z.string().min(40),
-});
-export type ProgrammaticCredentialCreated = z.infer<
-  typeof ProgrammaticCredentialCreatedSchema
->;
-
-export const WorkspaceArchiveMetadataSchema = ArchiveMetadataSchema.omit({
-  sub_group: true,
-});
-export type WorkspaceArchiveMetadata = z.infer<
-  typeof WorkspaceArchiveMetadataSchema
->;
-
-export const WorkspaceArchiveSchema = SharedArchiveSchema.extend({
-  organizationId: z.string(),
-  organizationName: z.string(),
-  uploaderFingerprint: z.string(),
-  actorKind: z.enum(["session", "credential", "operator", "legacy"]),
-});
-export type WorkspaceArchive = z.infer<typeof WorkspaceArchiveSchema>;
-
-export const AccessReceiptSchema = z.object({
-  id: z.string(),
-  actorKind: z.enum(["session", "credential", "operator", "legacy"]),
-  actorFingerprint: z.string(),
-  organizationId: z.string().nullable(),
-  capability: WorkspaceCapabilitySchema,
-  resourceType: z.enum(["font", "archive", "credential", "session", "system"]),
-  resourceFingerprint: z.string().nullable(),
-  outcome: z.enum(["allowed", "denied", "completed", "revoked"]),
-  createdAt: z.string().datetime(),
-});
-export type AccessReceipt = z.infer<typeof AccessReceiptSchema>;
+export const WhoAmIResponseSchema = ApiTokenSchema.pick({
+  id: true,
+  name: true,
+  prefix: true,
+  request_count: true,
+  accepted_file_count: true,
+  accepted_bytes: true,
+  last_used_at: true,
+  expires_at: true,
+}).extend({ role: z.literal("member") });
+export type WhoAmIResponse = z.infer<typeof WhoAmIResponseSchema>;

@@ -25,13 +25,11 @@
     "@hono/zod-validator": "^0.9.0",
     "aws4fetch": "^1.0.20",
     "hono": "^4.7.10",
-    "openid-client": "^6.8.4",
     "opentype.js": "^1.3.4",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/bun": "^1.2.14",
-    "@types/opentype.js": "^1.3.10",
     "typescript": "^5.8.2"
   }
 }

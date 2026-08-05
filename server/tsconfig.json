@@ -8,5 +8,5 @@
     "noEmit": true,
     "types": ["bun"]
   },
-  "include": ["src/**/*.ts", "scripts/**/*.ts"]
+  "include": ["src/index.ts", "src/app.ts", "src/container.ts", "src/runtime.ts", "scripts/**/*.ts"]
 }

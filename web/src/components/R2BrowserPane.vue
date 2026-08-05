@@ -83,6 +83,29 @@ const toggleFolder = async (node: R2Node) => {
   }
 };
 
+const loadMoreInFolder = async (node: R2Node) => {
+  if (!node.cursor || node.loadingMore) return;
+  node.loadingMore = true;
+  try {
+    const data = await browseR2(node.prefix, node.cursor);
+    const moreFiles: R2Node[] = (data.files ?? []).map((f: BrowseFile) => ({
+      prefix: f.key, name: f.name, type: "file" as const,
+      size: f.size, indexed: f.indexed,
+    }));
+    const moreFolders: R2Node[] = (data.folders ?? []).map((f: string) => ({
+      prefix: f,
+      name: f.replace(node.prefix, "").replace(/\/$/, "") || f,
+      type: "folder" as const,
+      loading: false, expanded: false, children: undefined,
+    }));
+    node.children = [...(node.children ?? []), ...moreFolders, ...moreFiles];
+    node.cursor = data.cursor;
+    node.hasMore = !data.done;
+  } finally {
+    node.loadingMore = false;
+  }
+};
+
 const indexSingleFile = async (node: R2Node) => {
   if (node.type !== "file" || node.indexed) return;
   try {
@@ -222,6 +245,7 @@ onMounted(() => loadRoot());
         :depth="0"
         :index-progress="indexProgress"
         @toggle="toggleFolder"
+        @load-more="loadMoreInFolder"
         @index-file="indexSingleFile"
         @index-all="indexAllUnder"
       />

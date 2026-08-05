@@ -1,9 +1,5 @@
 import { ActivityLog } from "@fontinass/activity-log";
-import {
-  AniBTEntitlementProvider,
-  type EntitlementProvider,
-  WorkspaceAccess,
-} from "@fontinass/access-control";
+import { UploadAccess } from "@fontinass/access-control";
 import { DefaultArchiveLibrary, SystemArchiveInspector, type ArchiveLibrary } from "@fontinass/archive-library";
 import type { SchedulerStatus } from "@fontinass/contracts";
 import { FontCatalog } from "@fontinass/font-catalog";
@@ -13,8 +9,7 @@ import {
   SqliteArchiveRepository,
   SqliteDatabase,
   SqliteFontCatalogRepository,
-  SqlitePublicUploadRateLimitRepository,
-  SqliteWorkspaceAccessRepository,
+  SqliteUploadAccessRepository,
 } from "@fontinass/persistence";
 import { FsFontFileStore, FsPendingArchiveStore, R2PublishedArchiveStore } from "@fontinass/storage";
 import { DefaultSubtitleProcessor, OpenTypeFontInspector, type SubtitleProcessor } from "@fontinass/subtitle-processing";
@@ -26,7 +21,7 @@ export interface AppContainer {
   database: SqliteDatabase;
   fonts: FontCatalog;
   archives: ArchiveLibrary;
-  workspaceAccess: WorkspaceAccess;
+  uploadAccess: UploadAccess;
   submissions: FontSubmission;
   activity: ActivityLog;
   subtitles: SubtitleProcessor;
@@ -37,10 +32,7 @@ export interface AppContainer {
   close(): void;
 }
 
-export function createContainer(
-  config = loadRuntimeConfig(),
-  overrides: { entitlementProvider?: EntitlementProvider } = {},
-): AppContainer {
+export function createContainer(config = loadRuntimeConfig()): AppContainer {
   const logger = new RuntimeLogger(config);
   const database = new SqliteDatabase(config.databasePath);
   const fontFiles = new FsFontFileStore(config.fontDirectory);
@@ -59,32 +51,17 @@ export function createContainer(
     new SystemArchiveInspector(config.archiveMaxUncompressed),
     { maxFileSize: config.archiveMaxFileSize, dailyContributionLimit: config.contributionDailyLimit },
   );
-  const workspaceAccess = new WorkspaceAccess(
-    new SqliteWorkspaceAccessRepository(database),
-    overrides.entitlementProvider ??
-      new AniBTEntitlementProvider({
-        origin: config.entitlement.origin,
-        keyId: config.entitlement.keyId,
-        signingSecret: config.entitlement.signingSecret,
-        timeoutMs: config.entitlement.timeoutMs,
-      }),
-    config.workspaceAccess,
-  );
-  const submissions = new FontSubmission(
-    new SqlitePublicUploadRateLimitRepository(
-      database,
-      config.publicUploadRequestsPerMinute,
-    ),
-    workspaceAccess,
-    fonts,
-    {
+  const uploadAccess = new UploadAccess(new SqliteUploadAccessRepository(database), {
+    applicationDailyLimit: config.tokenApplicationDailyLimit,
+    publicUploadRequestsPerMinute: config.publicUploadRequestsPerMinute,
+  });
+  const submissions = new FontSubmission(uploadAccess, fonts, {
     targetDirectory: config.uploadTargetDirectory,
     maxFiles: config.publicUploadMaxFiles,
     maxFileBytes: config.publicUploadMaxFileSize,
     maxBatchBytes: config.publicUploadMaxBatchSize,
     concurrency: config.subsetConcurrency,
-    },
-  );
+  });
   const activity = new ActivityLog(new SqliteActivityRepository(database));
   const subtitles = new DefaultSubtitleProcessor(fonts, logger, { cacheEntries: config.cacheMaxEntries });
 
@@ -127,7 +104,7 @@ export function createContainer(
   };
 
   return {
-    config, logger, database, fonts, archives, workspaceAccess, submissions, activity, subtitles,
+    config, logger, database, fonts, archives, uploadAccess, submissions, activity, subtitles,
     async bootstrap() {
       fontFiles.ensureReady();
       logger.prune();

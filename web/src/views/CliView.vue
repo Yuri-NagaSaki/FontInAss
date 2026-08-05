@@ -40,6 +40,7 @@ const codeExamples = [
 
 const configCmds = [
   { id: "cfg-server", titleKey: "cliConfigSetServer", code: "fontinass config set server https://font.anibt.net" },
+  { id: "cfg-key",    titleKey: "cliConfigSetKey",    code: "fontinass config set api_key your_secret_key" },
   { id: "cfg-show",   titleKey: "cliConfigShow",      code: "fontinass config show" },
 ];
 </script>
@@ -50,30 +51,30 @@ const configCmds = [
     <p>{{ t('cliDesc') }}</p>
 
     <h2>{{ t('cliDownloadTitle') }}</h2>
-    <p>{{ t('cliQuickInstallDesc') }}</p>
+    <p>Linux / macOS 用户可以一行命令完成下载和安装（自动识别 x64 / ARM 架构）。</p>
     <div class="code-block">
       <code>{{ quickInstall }}</code>
-      <button @click="copyCommand(quickInstall, 'quick')">{{ copiedCmd === 'quick' ? t('copied') : t('copy') }}</button>
+      <button @click="copyCommand(quickInstall, 'quick')">{{ copiedCmd === 'quick' ? '已复制' : '复制' }}</button>
     </div>
 
-    <p>{{ t('cliManualDownloadDesc') }}</p>
+    <p>如果想手动选择平台，也可以从下面挑一个直接下载二进制文件：</p>
     <p>
       <span v-for="(p, i) in platforms" :key="p.key">
         <a :href="downloadUrl(p.filename)" target="_blank" rel="noopener">{{ p.label }}</a><span v-if="i < platforms.length - 1"> · </span>
       </span>
     </p>
-    <p>{{ t('cliReleaseHistoryPrefix') }} <a :href="RELEASE_URL" target="_blank" rel="noopener">GitHub Releases</a>。</p>
+    <p>更多版本和历史发行说明请前往 <a :href="RELEASE_URL" target="_blank" rel="noopener">GitHub Releases</a>。</p>
 
     <h2>{{ t('cliUsageTitle') }}</h2>
     <template v-for="ex in codeExamples" :key="ex.id">
       <p>{{ t(ex.titleKey) }}。</p>
       <div class="code-block">
         <code>{{ ex.code }}</code>
-        <button @click="copyCommand(ex.code, ex.id)">{{ copiedCmd === ex.id ? t('copied') : t('copy') }}</button>
+        <button @click="copyCommand(ex.code, ex.id)">{{ copiedCmd === ex.id ? '已复制' : '复制' }}</button>
       </div>
     </template>
 
-    <h2>{{ t('cliFeaturesTitle') }}</h2>
+    <h2>主要功能</h2>
     <ul>
       <li><strong>{{ t('cliFeatBatch') }}</strong> — {{ t('cliFeatBatchDesc') }}</li>
       <li><strong>{{ t('cliFeatRecursive') }}</strong> — {{ t('cliFeatRecursiveDesc') }}</li>
@@ -86,12 +87,12 @@ const configCmds = [
       <p>{{ t(c.titleKey) }}。</p>
       <div class="code-block">
         <code>{{ c.code }}</code>
-        <button @click="copyCommand(c.code, c.id)">{{ copiedCmd === c.id ? t('copied') : t('copy') }}</button>
+        <button @click="copyCommand(c.code, c.id)">{{ copiedCmd === c.id ? '已复制' : '复制' }}</button>
       </div>
     </template>
 
-    <h2>{{ t('cliSourceTitle') }}</h2>
-    <p>{{ t('cliSourcePrefix') }} <a :href="`https://github.com/${REPO}`" target="_blank" rel="noopener">{{ REPO }}</a>，{{ t('aboutRepositoryLicense') }}</p>
+    <h2>源码</h2>
+    <p>本工具源码托管于 <a :href="`https://github.com/${REPO}`" target="_blank" rel="noopener">{{ REPO }}</a>，采用 AGPL-3.0 许可证。</p>
   </article>
 </template>
 
