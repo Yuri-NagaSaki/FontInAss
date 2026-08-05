@@ -121,7 +121,7 @@ bun run data:reindex
 | `UPLOAD_TARGET_DIR` | `CatCat-Fonts/` | Web/API 字体投稿目标目录 |
 | `PUBLIC_UPLOAD_MAX_FILES` | `20` | 公开页面单批最大文件数 |
 | `PUBLIC_UPLOAD_MAX_FILE_SIZE` | `104857600` | 公开页面单个字体文件最大字节数 |
-| `PUBLIC_UPLOAD_MAX_BATCH_SIZE` | `209715200` | 公开页面单批总字节上限 |
+| `PUBLIC_UPLOAD_MAX_BATCH_SIZE` | `104857600` | 公开页面单批总字节上限 |
 | `PUBLIC_UPLOAD_REQUESTS_PER_MINUTE` | `30` | 公开页面单 IP 每分钟请求上限 |
 | `TOKEN_APPLICATION_DAILY_LIMIT` | `3` | 单 IP 每日上传权限申请上限 |
 | `AUTO_INDEX_INTERVAL_HOURS` | `4` | 自动扫描、索引和去重周期 |

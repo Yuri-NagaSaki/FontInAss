@@ -42,7 +42,7 @@ export function loadRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
     uploadTargetDirectory: (process.env.UPLOAD_TARGET_DIR ?? "CatCat-Fonts/").replace(/\/?$/, "/"),
     publicUploadMaxFiles: integer("PUBLIC_UPLOAD_MAX_FILES", 20, 1, 100),
     publicUploadMaxFileSize: integer("PUBLIC_UPLOAD_MAX_FILE_SIZE", 100 * 1024 * 1024, 1),
-    publicUploadMaxBatchSize: integer("PUBLIC_UPLOAD_MAX_BATCH_SIZE", 200 * 1024 * 1024, 1),
+    publicUploadMaxBatchSize: integer("PUBLIC_UPLOAD_MAX_BATCH_SIZE", 100 * 1024 * 1024, 1),
     publicUploadRequestsPerMinute: integer("PUBLIC_UPLOAD_REQUESTS_PER_MINUTE", 30, 1, 1000),
     tokenApplicationDailyLimit: integer("TOKEN_APPLICATION_DAILY_LIMIT", 3, 1, 100),
     archiveMaxFileSize: integer("SHARING_MAX_FILE_SIZE", 200 * 1024 * 1024, 1),

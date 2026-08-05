@@ -23,7 +23,7 @@ interface QueueEntry { file: File; status: QueueStatus; result?: ApiUploadResult
 const policy = ref<PublicFontUploadPolicy>({
   max_files: 20,
   max_file_bytes: 100 * 1024 * 1024,
-  max_batch_bytes: 200 * 1024 * 1024,
+  max_batch_bytes: 100 * 1024 * 1024,
   requests_per_minute: 30,
 });
 const queue = ref<QueueEntry[]>([]);
