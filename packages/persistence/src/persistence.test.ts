@@ -32,6 +32,17 @@ describe("SqliteDatabase migrations", () => {
         font_file_id TEXT, filename TEXT NOT NULL, size INTEGER NOT NULL DEFAULT 0, sha256 TEXT,
         status TEXT NOT NULL, error TEXT, client_ip TEXT, user_agent TEXT, uploaded_at TEXT NOT NULL
       );
+      CREATE TABLE archives (
+        id TEXT PRIMARY KEY, name_cn TEXT NOT NULL, letter TEXT NOT NULL, season TEXT NOT NULL,
+        sub_group TEXT NOT NULL, languages_json TEXT NOT NULL DEFAULT '[]',
+        subtitle_formats_json TEXT NOT NULL DEFAULT '[]', episode_count INTEGER NOT NULL DEFAULT 0,
+        has_fonts INTEGER NOT NULL DEFAULT 0, filename TEXT NOT NULL, storage_key TEXT UNIQUE,
+        file_size INTEGER NOT NULL DEFAULT 0, file_count INTEGER NOT NULL DEFAULT 0,
+        pending_path TEXT, status TEXT NOT NULL, contributor TEXT,
+        sub_entries_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+      );
     `);
     old.query(`INSERT INTO api_tokens (id,name,prefix,token_hash,enabled,upload_count,total_bytes,created_at) VALUES ('t1','old','0123abcd','hash',1,7,123,'2026-07-22T00:00:00.000Z')`).run();
     old.query(`INSERT INTO api_upload_history (id,token_id,filename,size,status,uploaded_at) VALUES ('h1','t1','font.ttf',123,'success','2026-07-22T00:00:01.000Z')`).run();
@@ -59,6 +70,20 @@ describe("SqliteDatabase migrations", () => {
     expect(migrated.raw.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(3);
     expect(migrated.raw.query<{ name: string }, [string]>("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get("api_token_applications")?.name).toBe("api_token_applications");
     expect(migrated.raw.query<{ name: string }, [string]>("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get("public_font_upload_rate_limits")?.name).toBe("public_font_upload_rate_limits");
+    expect(
+      migrated.raw
+        .query<{ name: string }, [string]>(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+        )
+        .get("idx_archives_organization_time")?.name,
+    ).toBe("idx_archives_organization_time");
+    expect(
+      migrated.raw
+        .query<{ name: string }, [string]>(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+        )
+        .get("idx_api_tokens_application")?.name,
+    ).toBe("idx_api_tokens_application");
     for (const table of [
       "oidc_identities",
       "oidc_login_transactions",

@@ -84,7 +84,6 @@ CREATE TABLE IF NOT EXISTS archives (
   ,actor_id_fingerprint TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_archives_status_sort ON archives(status, letter, name_cn, season);
-CREATE INDEX IF NOT EXISTS idx_archives_organization_time ON archives(organization_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS upload_rate_limits (
   ip_hash TEXT NOT NULL,
@@ -288,6 +287,14 @@ CREATE INDEX IF NOT EXISTS idx_font_upload_receipts_credential_time ON font_uplo
 CREATE INDEX IF NOT EXISTS idx_font_upload_receipts_org_time ON font_upload_receipts(organization_id, uploaded_at DESC);
 `;
 
+const POST_MIGRATION_SCHEMA = `
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_application
+  ON api_tokens(application_id)
+  WHERE application_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_archives_organization_time
+  ON archives(organization_id, created_at DESC);
+`;
+
 const SCHEMA_VERSION = 3;
 
 function migrate(database: Database): void {
@@ -381,6 +388,7 @@ export class SqliteDatabase {
     this.raw = new Database(path, { create: true });
     this.raw.run(SCHEMA);
     migrate(this.raw);
+    this.raw.run(POST_MIGRATION_SCHEMA);
   }
 
   ping(): void {
