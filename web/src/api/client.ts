@@ -105,7 +105,13 @@ export async function verifyFontAccess(key = getApiKey()): Promise<FontAccessSes
   return json(await fetch(manualUrl("/api/access/whoami"), { headers: { "X-API-Key": normalized } }));
 }
 
-async function json<T>(response: Response): Promise<T> {
+type JsonBodyResponse = {
+  ok: boolean;
+  status: number;
+  json(): Promise<unknown>;
+};
+
+async function json<T>(response: JsonBodyResponse): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({})) as { error?: string };
     throw new Error(body.error ?? `HTTP ${response.status}`);

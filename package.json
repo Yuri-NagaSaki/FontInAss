@@ -2,7 +2,7 @@
   "name": "fontinass-local",
   "version": "2.0.0",
   "private": true,
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.0",
   "workspaces": ["packages/*", "server", "web"],
   "scripts": {
     "dev": "bun run --cwd server dev & bun run --cwd web dev",
@@ -15,7 +15,7 @@
     "start": "bun run --cwd server start"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.14",
+    "@types/bun": "^1.4.0",
     "typescript": "^5.8.2"
   }
 }

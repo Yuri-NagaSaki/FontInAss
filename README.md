@@ -82,6 +82,8 @@ git pull --ff-only
 
 脚本会先完成镜像构建，再 recreate 容器，并等待 `{ "status": "ok", "version": 2 }` 健康契约，避免构建期间停机。
 
+compose 将容器内存限制为 3GiB（`mem_limit` 与 `memswap_limit` 相同，不使用 swap）。超出后由内核 OOM 结束进程，`restart: unless-stopped` 会拉起新进程。
+
 ## 从 v1 升级
 
 v2 使用全新的 `data/fontinass-v2.db`，不会改写旧 `data/fonts.db`。建议按以下顺序一次性切换：
@@ -173,7 +175,7 @@ fontinass subset --alias-salt TC traditional-jp.ass
 
 ## 开发与验证
 
-需要 Bun 1.3.14：
+需要 Bun 1.4.0：
 
 ```bash
 bun install --frozen-lockfile

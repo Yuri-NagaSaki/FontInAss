@@ -3,6 +3,10 @@ services:
     build: .
     container_name: fontinass-local
     restart: unless-stopped
+    # Cap container memory so subset jobs cannot unbounded-grow host RSS.
+    # memswap_limit == mem_limit disables swap; OOM restarts via unless-stopped.
+    mem_limit: 3g
+    memswap_limit: 3g
     # SECURITY: Bound to 127.0.0.1 (localhost only). To expose remotely,
     # change to "0.0.0.0:3300:3000" and ensure API_KEY is set.
     ports:

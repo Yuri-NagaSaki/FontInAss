@@ -29,7 +29,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.14",
+    "@types/bun": "^1.4.0",
     "typescript": "^5.8.2"
   }
 }

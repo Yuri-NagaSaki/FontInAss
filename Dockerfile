@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.14 AS builder
+FROM oven/bun:1.4.0 AS builder
 
 WORKDIR /build
 COPY package.json bun.lock ./
@@ -12,7 +12,7 @@ COPY web ./web
 RUN bun run --cwd web build
 RUN bun run --cwd server build
 
-FROM oven/bun:1.3.14 AS runtime
+FROM oven/bun:1.4.0 AS runtime
 
 RUN apt-get update -qq \
   && apt-get install -y --no-install-recommends p7zip-full \
