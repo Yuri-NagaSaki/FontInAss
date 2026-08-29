@@ -9,17 +9,17 @@ export default defineConfig({
     vue(),
   ],
   resolve: {
-    alias: { "@": path.resolve(__dirname, "./src") },
+    alias: { "@": path.resolve(import.meta.dirname, "./src") },
   },
   build: {
     sourcemap: "hidden",
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks: {
-          "vendor-vue":   ["vue", "vue-router", "vue-i18n"],
-          "vendor-icons": ["lucide-vue-next"],
-          "vendor-waline": ["@waline/client"],
-          "vendor-utils": ["@vueuse/core"],
+        manualChunks(id) {
+          if (/[\\/]node_modules[\\/](?:vue|vue-router|vue-i18n)[\\/]/.test(id)) return "vendor-vue";
+          if (/[\\/]node_modules[\\/]lucide-vue-next[\\/]/.test(id)) return "vendor-icons";
+          if (/[\\/]node_modules[\\/]@waline[\\/]client[\\/]/.test(id)) return "vendor-waline";
+          if (/[\\/]node_modules[\\/]@vueuse[\\/]core[\\/]/.test(id)) return "vendor-utils";
         },
       },
     },

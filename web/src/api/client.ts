@@ -122,7 +122,7 @@ async function json<T>(response: JsonBodyResponse): Promise<T> {
 function manualUrl(path: string): string { return `${configuredBase}${path}`; }
 
 export async function listFonts(page = 1, limit = 50, search = ""): Promise<FontListResponse> {
-  return json(await api.fonts.$get({ query: { page, limit, search } }, { headers: authHeaders() }));
+  return json(await api.fonts.$get({ query: { page: String(page), limit: String(limit), search } }, { headers: authHeaders() }));
 }
 
 export async function uploadFonts(files: File[], targetDir?: string, onProgress?: (done: number, total: number) => void): Promise<UploadResult[]> {
@@ -179,7 +179,7 @@ export async function indexR2Keys(keys: string[]): Promise<IndexFontsResponse> {
 }
 
 export async function listR2Keys(prefix: string, cursor?: string, limit = 500): Promise<{ keys: Array<{ key: string; size: number }>; nextCursor: string | null; done: boolean }> {
-  return json(await api.fonts.keys.$get({ query: { prefix, cursor: Number(cursor ?? 0), limit } }, { headers: authHeaders() }));
+  return json(await api.fonts.keys.$get({ query: { prefix, cursor: String(Number(cursor ?? 0)), limit: String(limit) } }, { headers: authHeaders() }));
 }
 
 export async function getFontStats(): Promise<FontStats> { return json(await api.fonts.stats.$get({}, { headers: authHeaders() })); }
@@ -237,10 +237,10 @@ export async function downloadArchiveFile(id: string): Promise<{ blob: Blob; fil
 }
 
 export async function listProcessingLogs(page = 1, limit = 50, search = "", code?: number): Promise<ProcessingLogList> {
-  return json(await api.activity.$get({ query: { page, limit, search, ...(code === undefined ? {} : { code }) } }, {}));
+  return json(await api.activity.$get({ query: { page: String(page), limit: String(limit), search, ...(code === undefined ? {} : { code: String(code) }) } }, {}));
 }
 export async function getMissingFonts(limit = 20, showResolved = false): Promise<MissingFontRanking[]> {
-  const result = await json<{ total: number; data: MissingFontRanking[] }>(await api.activity["missing-fonts"].$get({ query: { limit, show_resolved: String(showResolved) as "true" | "false" } }));
+  const result = await json<{ total: number; data: MissingFontRanking[] }>(await api.activity["missing-fonts"].$get({ query: { limit: String(limit), show_resolved: String(showResolved) as "true" | "false" } }));
   return result.data;
 }
 export async function resolveMissingFont(fontName: string): Promise<void> { await json(await api.activity["missing-fonts"].resolve.$post({ json: { font_name: fontName } }, { headers: authHeaders() })); }
@@ -263,7 +263,7 @@ export async function claimUploadAccessApplication(id: string, secret: string): 
 }
 
 export async function listUploadAccessApplications(page = 1, limit = 50, status?: ApiTokenApplicationStatus): Promise<ApiTokenApplicationList> {
-  return json(await api.tokens.applications.$get({ query: { page, limit, ...(status ? { status } : {}) } }, { headers: authHeaders() }));
+  return json(await api.tokens.applications.$get({ query: { page: String(page), limit: String(limit), ...(status ? { status } : {}) } }, { headers: authHeaders() }));
 }
 
 export async function reviewUploadAccessApplication(id: string, input: { decision: "approve" | "reject"; public_note?: string | null; admin_note?: string | null }): Promise<ApiTokenApplicationAdmin> {
@@ -303,10 +303,10 @@ export async function updateApiToken(id: string, patch: { name?: string; note?: 
 }
 export async function deleteApiToken(id: string): Promise<void> { await json(await api.tokens[":id"].$delete({ param: { id } }, { headers: authHeaders() })); }
 export async function getApiTokenHistory(id: string, page = 1, limit = 50, status?: ApiUploadStatus): Promise<ApiHistoryResponse> {
-  return json(await api.tokens[":id"].history.$get({ param: { id }, query: { page, limit, ...(status ? { status } : {}) } }, { headers: authHeaders() }));
+  return json(await api.tokens[":id"].history.$get({ param: { id }, query: { page: String(page), limit: String(limit), ...(status ? { status } : {}) } }, { headers: authHeaders() }));
 }
 export async function getAllApiHistory(page = 1, limit = 50, status?: ApiUploadStatus): Promise<ApiHistoryResponse> {
-  return json(await api.tokens.history.$get({ query: { page, limit, ...(status ? { status } : {}) } }, { headers: authHeaders() }));
+  return json(await api.tokens.history.$get({ query: { page: String(page), limit: String(limit), ...(status ? { status } : {}) } }, { headers: authHeaders() }));
 }
 
 export function base64Encode(value: string): string { return btoa(unescape(encodeURIComponent(value))); }

@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@fontinass/contracts": "workspace:*",
-    "opentype.js": "^1.3.4"
+    "opentype.js": "^2.0.0"
   },
   "devDependencies": {
     "@types/opentype.js": "^1.3.10"

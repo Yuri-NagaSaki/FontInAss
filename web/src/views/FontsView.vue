@@ -71,7 +71,6 @@ watch(tabs, (available) => {
 });
 
 const fontListRef = ref<InstanceType<typeof FontListPane> | null>(null);
-const r2BrowserRef = ref<InstanceType<typeof R2BrowserPane> | null>(null);
 const { indexProgress } = useIndexState();
 
 const handleFontChanged = () => {
@@ -107,7 +106,7 @@ const handleFontChanged = () => {
       </div>
 
       <FontListPane v-if="activeTab === 'list'" ref="fontListRef" :can-delete="isAdmin" />
-      <R2BrowserPane v-if="activeTab === 'browser'" ref="r2BrowserRef" @changed="handleFontChanged" />
+      <R2BrowserPane v-if="activeTab === 'browser'" @changed="handleFontChanged" />
       <FontUploadPane v-if="activeTab === 'upload'" @uploaded="handleFontChanged" />
       <IndexStatsPane v-if="activeTab === 'stats'" :index-progress="indexProgress" @changed="handleFontChanged" />
       <SharingAdminPane v-if="activeTab === 'sharing'" />
