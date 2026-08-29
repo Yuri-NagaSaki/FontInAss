@@ -13,6 +13,12 @@ export interface RuntimeConfig {
   logLevel: "debug" | "info" | "warn" | "error";
   subsetConcurrency: number;
   cacheMaxEntries: number;
+  cacheMaxBytes: number;
+  cacheTtlMs: number;
+  subsetMaxFiles: number;
+  subsetMaxFileSize: number;
+  subsetMaxBatchSize: number;
+  activityRetentionDays: number;
   uploadTargetDirectory: string;
   publicUploadMaxFiles: number;
   publicUploadMaxFileSize: number;
@@ -38,7 +44,13 @@ export function loadRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
     logDirectory: path(process.env.LOG_DIR ?? "./data/logs"),
     logLevel: logLevel(process.env.LOG_LEVEL ?? "info"),
     subsetConcurrency: integer("SUBSET_CONCURRENCY", 5, 1, 64),
-    cacheMaxEntries: integer("CACHE_MAX_ENTRIES", 500, 0, 10000),
+    cacheMaxEntries: integer("CACHE_MAX_ENTRIES", 100, 0, 10000),
+    cacheMaxBytes: integer("CACHE_MAX_BYTES", 64 * 1024 * 1024, 0),
+    cacheTtlMs: integer("CACHE_TTL_MS", 48 * 60 * 60 * 1000, 0),
+    subsetMaxFiles: integer("SUBSET_MAX_FILES", 20, 1, 100),
+    subsetMaxFileSize: integer("SUBSET_MAX_FILE_SIZE", 64 * 1024 * 1024, 1),
+    subsetMaxBatchSize: integer("SUBSET_MAX_BATCH_SIZE", 256 * 1024 * 1024, 1),
+    activityRetentionDays: integer("ACTIVITY_RETENTION_DAYS", 30, 1, 3650),
     uploadTargetDirectory: (process.env.UPLOAD_TARGET_DIR ?? "CatCat-Fonts/").replace(/\/?$/, "/"),
     publicUploadMaxFiles: integer("PUBLIC_UPLOAD_MAX_FILES", 20, 1, 100),
     publicUploadMaxFileSize: integer("PUBLIC_UPLOAD_MAX_FILE_SIZE", 100 * 1024 * 1024, 1),

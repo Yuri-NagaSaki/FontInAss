@@ -27,6 +27,6 @@ export default {
   maxRequestBodySize: Math.max(
     container.config.publicUploadMaxBatchSize,
     container.config.archiveMaxFileSize,
-    2 * 1024 * 1024 * 1024,
+    container.config.subsetMaxBatchSize,
   ) + 2 * 1024 * 1024,
 };

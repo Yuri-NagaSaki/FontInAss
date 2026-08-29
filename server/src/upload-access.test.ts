@@ -27,11 +27,12 @@ describe("font access HTTP flow", () => {
     const config: RuntimeConfig = {
       port: 3000, apiKey: "admin-test-key", corsOrigin: "*", fontDirectory: join(directory, "fonts"),
       databasePath: join(directory, "data.db"), pendingDirectory: join(directory, "pending"), logDirectory: join(directory, "logs"),
-      logLevel: "error", subsetConcurrency: 2, cacheMaxEntries: 0, uploadTargetDirectory: "Contributions/",
+      logLevel: "error", subsetConcurrency: 2, cacheMaxEntries: 0, cacheMaxBytes: 0, cacheTtlMs: 0, uploadTargetDirectory: "Contributions/",
       publicUploadMaxFiles: 1, publicUploadMaxFileSize: 100 * 1024 * 1024, publicUploadMaxBatchSize: 200 * 1024 * 1024,
       publicUploadRequestsPerMinute: 2, tokenApplicationDailyLimit: 3,
       archiveMaxFileSize: 200 * 1024 * 1024, archiveMaxUncompressed: 2 * 1024 * 1024 * 1024,
       contributionDailyLimit: 3, autoIndexIntervalHours: 4,
+      subsetMaxFiles: 20, subsetMaxFileSize: 64 * 1024 * 1024, subsetMaxBatchSize: 256 * 1024 * 1024, activityRetentionDays: 30,
       r2: { accountId: "", accessKeyId: "", secretAccessKey: "", bucketName: "", publicUrl: "" },
     };
     const container = createContainer(config);

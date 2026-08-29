@@ -88,6 +88,14 @@ class MemoryUploadAccessRepository implements UploadAccessRepository {
     this.publicUploadLimits.set(key, count + 1);
     return true;
   }
+  pruneRateLimits(cutoffDate: string, cutoffMinute: string) {
+    for (const key of this.applicationLimits.keys()) {
+      if (key.slice(key.indexOf(":") + 1) < cutoffDate) this.applicationLimits.delete(key);
+    }
+    for (const key of this.publicUploadLimits.keys()) {
+      if (key.slice(key.indexOf(":") + 1) < cutoffMinute) this.publicUploadLimits.delete(key);
+    }
+  }
   recordSubmission(tokenId: string, results: ApiUploadResult[], context: UploadRequestContext, uploadedAt: string) {
     const token = this.tokens.get(tokenId);
     if (!token) throw new Error("missing token");

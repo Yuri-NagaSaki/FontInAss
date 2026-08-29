@@ -18,6 +18,7 @@ export interface ActivityRepository {
   resolveFont(name: string): void;
   unresolveFont(name: string): void;
   stats(today: string): LogStats;
+  prune(cutoffIso: string): number;
 }
 
 export class ActivityLog {
@@ -43,6 +44,7 @@ export class ActivityLog {
   resolve(name: string): void { this.repository.resolveFont(name); }
   unresolve(name: string): void { this.repository.unresolveFont(name); }
   stats(): LogStats { return this.repository.stats(new Date().toISOString().slice(0, 10)); }
+  prune(cutoffIso: string): number { return this.repository.prune(cutoffIso); }
 }
 
 export type { ProcessingLog };

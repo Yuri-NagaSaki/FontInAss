@@ -96,14 +96,15 @@ echo "────────────────────────�
 section "1. Health Check"
 
 api GET "/api/health"
-assert_status "401" "Health without API key returns 401"
+assert_status "200" "Health without API key returns 200"
+assert_json_field "status" "Health response has 'status' field"
+assert_json_field "version" "Health response has 'version' field"
 
 api_auth GET "/api/health"
-assert_status "200" "Health with API key returns 200"
-assert_json_field "status" "Health response has 'status' field"
+assert_status "200" "Health with API key still returns 200"
 
 api GET "/api/health" -H "X-API-Key: wrong-key"
-assert_status "401" "Health with wrong API key returns 401"
+assert_status "200" "Health ignores invalid API key"
 
 # ── 2. Static Assets (Frontend) ─────────────────────────────────────────────
 section "2. Static Assets"

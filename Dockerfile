@@ -30,7 +30,11 @@ ENV PORT=3000 \
     LOG_DIR=/app/data/logs \
     CORS_ORIGIN=* \
     SUBSET_CONCURRENCY=5 \
-    CACHE_MAX_ENTRIES=500 \
+    CACHE_MAX_ENTRIES=100 \
+    CACHE_MAX_BYTES=67108864 \
+    SUBSET_MAX_FILES=20 \
+    SUBSET_MAX_FILE_SIZE=67108864 \
+    SUBSET_MAX_BATCH_SIZE=268435456 \
     PUBLIC_UPLOAD_MAX_FILES=20 \
     PUBLIC_UPLOAD_MAX_FILE_SIZE=104857600 \
     PUBLIC_UPLOAD_MAX_BATCH_SIZE=104857600 \
@@ -40,6 +44,6 @@ ENV PORT=3000 \
 
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD bun -e "const h=process.env.API_KEY?{'X-API-Key':process.env.API_KEY}:{};const r=await fetch('http://localhost:3000/api/health',{headers:h});if(!r.ok)process.exit(1);const j=await r.json();if(j.version!==2)process.exit(1)" || exit 1
+  CMD bun -e "const r=await fetch('http://localhost:3000/api/health');if(!r.ok)process.exit(1);const j=await r.json();if(j.version!==2)process.exit(1)" || exit 1
 
 CMD ["bun", "dist/index.js"]

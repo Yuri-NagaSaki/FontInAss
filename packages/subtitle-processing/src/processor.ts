@@ -62,22 +62,22 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
     const options = SubsetOptionsSchema.parse(input.options ?? {});
     const cacheKey = makeCacheKey(input.bytes, options);
     const cached = this.cache.get(cacheKey);
-    if (cached) return { code: CODE.OK, messages: [], data: cached };
+    if (cached) return { code: CODE.OK, messages: [], data: cached.bytes, fontCount: cached.fontCount };
 
     const decoded = decodeAssBytes(input.bytes);
-    if (!decoded) return failure(CODE.CLIENT_ERROR, "Cannot decode subtitle file encoding");
+    if (!decoded) return failure(CODE.CLIENT_ERROR, "Cannot decode subtitle file encoding", 0);
     let text = decoded.text;
 
     if (isSrt(text)) {
       if (!options.srtFormat || !options.srtStyle) {
-        return failure(CODE.CLIENT_ERROR, "SRT→ASS conversion not configured (missing SRT format/style)");
+        return failure(CODE.CLIENT_ERROR, "SRT→ASS conversion not configured (missing SRT format/style)", 0);
       }
       text = srtToAss(text, options.srtFormat, options.srtStyle);
     }
 
     const fontSection = checkFontsSection(text);
     if (fontSection === 2 && !options.clearFonts) {
-      return failure(CODE.CLIENT_ERROR, "Subtitle already has embedded fonts. Enable 'clear fonts' to re-process.");
+      return failure(CODE.CLIENT_ERROR, "Subtitle already has embedded fonts. Enable 'clear fonts' to re-process.", 0);
     }
     if (fontSection > 0) text = removeSection(text, "Fonts");
 
@@ -102,7 +102,7 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
     }
 
     const entries = Object.entries(fontCharMap);
-    if (!entries.length) return failure(CODE.CLIENT_ERROR, "No fonts referenced in subtitle");
+    if (!entries.length) return failure(CODE.CLIENT_ERROR, "No fonts referenced in subtitle", 0);
     const displayName = (name: string) => originalNames[name] ?? name;
     const aliases = buildAliases(entries.map(([key]) => key.split("|")[0]), displayName, options.fontAliasSalt);
     const requests = entries.map(([key]) => {
@@ -115,12 +115,12 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
       matches = this.fonts.match(requests);
     } catch (error) {
       this.logger.error("[subtitle-processing] font lookup failed", error);
-      return failure(CODE.SERVER_ERROR, "Database error");
+      return failure(CODE.SERVER_ERROR, "Database error", 0);
     }
 
     if (options.fontsCheck) {
       const missing = requests.filter((request) => !matches.get(request.key));
-      if (missing.length) return { code: CODE.MISSING_FONT, messages: missing.map((request) => `Missing font: [${displayName(request.nameLower)}]`), data: null };
+      if (missing.length) return { code: CODE.MISSING_FONT, messages: missing.map((request) => `Missing font: [${displayName(request.nameLower)}]`), data: null, fontCount: 0 };
     }
 
     type Variant = { key: string; unicodeSet: Set<number>; nameLower: string; weight: number; italic: boolean };
@@ -167,7 +167,7 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
       }
     }
 
-    let fontsSection = "[Fonts]\n";
+    const fontChunks = ["[Fonts]\n"];
     const warnings: string[] = [];
     const successful = new Set<string>();
     for (const [key] of entries) {
@@ -176,11 +176,12 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
       const [nameLower] = key.split("|");
       if (result.error) warnings.push(result.error);
       else {
-        fontsSection += result.encoded;
+        fontChunks.push(result.encoded);
         successful.add(nameLower);
         if (result.missingGlyphs) warnings.push(`Missing glyphs in [${displayName(nameLower)}]: ${result.missingGlyphs}`);
       }
     }
+    const fontsSection = fontChunks.join("");
 
     const aliasByOriginal: Record<string, string> = {};
     const aliasToOriginal: Record<string, string> = {};
@@ -195,16 +196,16 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
       : removeFontSubsetComments(text);
 
     const eventsIndex = text.indexOf("[Events]");
-    if (eventsIndex === -1) return failure(CODE.CLIENT_ERROR, "No [Events] section found in subtitle");
+    if (eventsIndex === -1) return failure(CODE.CLIENT_ERROR, "No [Events] section found in subtitle", entries.length);
     const output = new TextEncoder().encode(`\uFEFF${text.slice(0, eventsIndex)}${fontsSection}\n${text.slice(eventsIndex)}`);
-    if (!warnings.length) this.cache.set(cacheKey, output);
+    if (!warnings.length) this.cache.set(cacheKey, output, entries.length);
     this.logger.info(`[subtitle-processing] ${input.filename}: ${entries.length} variants, ${warnings.length} warnings`);
-    return { code: warnings.length ? CODE.WARN : CODE.OK, messages: warnings, data: output };
+    return { code: warnings.length ? CODE.WARN : CODE.OK, messages: warnings, data: output, fontCount: entries.length };
   }
 }
 
-function failure(code: typeof CODE.CLIENT_ERROR | typeof CODE.SERVER_ERROR, message: string): SubsetResult {
-  return { code, messages: [message], data: null };
+function failure(code: typeof CODE.CLIENT_ERROR | typeof CODE.SERVER_ERROR, message: string, fontCount = 0): SubsetResult {
+  return { code, messages: [message], data: null, fontCount };
 }
 
 function buildAliases(names: string[], displayName: (name: string) => string, salt: string): Map<string, string> {
@@ -228,31 +229,42 @@ function makeCacheKey(bytes: Uint8Array, options: SubsetOptions): string {
 }
 
 class ResultCache {
-  private readonly entries = new Map<string, { bytes: Uint8Array; expiresAt: number }>();
+  private readonly entries = new Map<string, { bytes: Uint8Array; fontCount: number; expiresAt: number }>();
   private totalBytes = 0;
 
   constructor(private readonly maxEntries: number, private readonly maxBytes: number, private readonly ttlMs: number) {}
 
-  get(key: string): Uint8Array | null {
+  get(key: string): { bytes: Uint8Array; fontCount: number } | null {
+    this.pruneExpired();
     const entry = this.entries.get(key);
     if (!entry) return null;
-    if (entry.expiresAt <= Date.now()) { this.entries.delete(key); this.totalBytes -= entry.bytes.byteLength; return null; }
     this.entries.delete(key);
     this.entries.set(key, entry);
-    return entry.bytes;
+    return { bytes: entry.bytes, fontCount: entry.fontCount };
   }
 
-  set(key: string, bytes: Uint8Array): void {
+  set(key: string, bytes: Uint8Array, fontCount: number): void {
+    this.pruneExpired();
     const existing = this.entries.get(key);
     if (existing) this.totalBytes -= existing.bytes.byteLength;
     this.entries.delete(key);
-    this.entries.set(key, { bytes, expiresAt: Date.now() + this.ttlMs });
+    if (this.maxEntries <= 0 || this.maxBytes <= 0) return;
+    this.entries.set(key, { bytes, fontCount, expiresAt: Date.now() + this.ttlMs });
     this.totalBytes += bytes.byteLength;
-    while (this.entries.size > this.maxEntries || this.totalBytes > this.maxBytes) {
+    while (this.entries.size && (this.entries.size > this.maxEntries || this.totalBytes > this.maxBytes)) {
       const oldest = this.entries.keys().next().value as string | undefined;
       if (!oldest) break;
       this.totalBytes -= this.entries.get(oldest)!.bytes.byteLength;
       this.entries.delete(oldest);
+    }
+  }
+
+  private pruneExpired(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.entries) {
+      if (entry.expiresAt > now) continue;
+      this.totalBytes -= entry.bytes.byteLength;
+      this.entries.delete(key);
     }
   }
 }

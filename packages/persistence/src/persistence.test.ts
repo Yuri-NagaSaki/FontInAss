@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { SqliteDatabase, SqliteUploadAccessRepository } from "./index.js";
+import { SqliteActivityRepository, SqliteDatabase, SqliteFontCatalogRepository, SqliteUploadAccessRepository } from "./index.js";
 
 const directories: string[] = [];
 afterEach(() => {
@@ -50,3 +50,51 @@ describe("SqliteDatabase migrations", () => {
     migrated.close();
   });
 });
+
+describe("SqliteFontCatalogRepository", () => {
+  test("counts font files without loading every row", () => {
+    const directory = mkdtempSync(join(tmpdir(), "fontinass-count-"));
+    directories.push(directory);
+    const database = new SqliteDatabase(join(directory, "fonts.db"));
+    const fonts = new SqliteFontCatalogRepository(database);
+    fonts.insertFile({ id: "a", filename: "a.ttf", key: "CatCat-Fonts/a.ttf", size: 10, sha256: "aa" }, [
+      { index: 0, familyNames: ["A"], weight: 400, bold: false, italic: false },
+    ]);
+    fonts.insertFile({ id: "b", filename: "b.ttf", key: "CatCat-Fonts/b.ttf", size: 20, sha256: "bb" }, [
+      { index: 0, familyNames: ["B"], weight: 400, bold: false, italic: false },
+    ]);
+    expect(fonts.countFiles()).toBe(2);
+    database.close();
+  });
+});
+
+describe("SqliteActivityRepository", () => {
+  test("aggregates missing fonts without loading every event into JS maps", () => {
+    const directory = mkdtempSync(join(tmpdir(), "fontinass-missing-"));
+    directories.push(directory);
+    const database = new SqliteDatabase(join(directory, "activity.db"));
+    const activity = new SqliteActivityRepository(database);
+    activity.insert({ filename: "a.ass", clientIp: null, code: 201, messages: [], missingFonts: ["Foo", "Bar"], fontCount: 2, fileSize: 10, elapsedMs: 1 });
+    activity.insert({ filename: "b.ass", clientIp: null, code: 201, messages: [], missingFonts: ["Foo"], fontCount: 1, fileSize: 10, elapsedMs: 1 });
+    const ranked = activity.missingFonts(10, false);
+    expect(ranked.total).toBe(2);
+    expect(ranked.data[0]).toMatchObject({ font_name: "Foo", count: 2, resolved: false });
+    expect(ranked.data[1]).toMatchObject({ font_name: "Bar", count: 1, resolved: false });
+    database.close();
+  });
+
+  test("prunes processing events older than the cutoff", () => {
+    const directory = mkdtempSync(join(tmpdir(), "fontinass-prune-"));
+    directories.push(directory);
+    const database = new SqliteDatabase(join(directory, "activity.db"));
+    const activity = new SqliteActivityRepository(database);
+    activity.insert({ filename: "old.ass", clientIp: null, code: 200, messages: [], missingFonts: [], fontCount: 1, fileSize: 10, elapsedMs: 1 });
+    database.raw.query("UPDATE processing_events SET processed_at = ?").run("2020-01-01T00:00:00.000Z");
+    activity.insert({ filename: "new.ass", clientIp: null, code: 200, messages: [], missingFonts: [], fontCount: 1, fileSize: 10, elapsedMs: 1 });
+    expect(activity.prune("2024-01-01T00:00:00.000Z")).toBe(1);
+    expect(activity.list({ page: 1, limit: 10, search: "" }).total).toBe(1);
+    expect(activity.list({ page: 1, limit: 10, search: "" }).data[0].filename).toBe("new.ass");
+    database.close();
+  });
+});
+

@@ -58,6 +58,7 @@ export interface FontCatalogRepository {
   replaceFaces(fileId: string, faces: FontFaceMetadata[]): void;
   listBrokenFiles(): FontFileRecord[];
   listFileEntries(): FontFileRecord[];
+  countFiles(): number;
   listFiles(query: { page: number; limit: number; search: string }): FontListResponse;
   countByTopFolder(): Array<{ prefix: string; count: number }>;
   findById(id: string): FontFileRecord | null;
@@ -319,7 +320,7 @@ export class FontCatalog {
     }).sort((a, b) => b.onDisk - a.onDisk || b.indexed - a.indexed || a.prefix.localeCompare(b.prefix));
 
     const onDisk = folders.reduce((sum, folder) => sum + folder.onDisk, 0);
-    const total = this.repository.listFileEntries().length;
+    const total = this.repository.countFiles();
     const unindexed = folders.reduce((sum, folder) => sum + Math.max(0, folder.onDisk - folder.indexed), 0);
     return { total, onDisk, unindexed, folders };
   }

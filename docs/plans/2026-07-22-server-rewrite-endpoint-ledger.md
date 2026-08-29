@@ -16,7 +16,7 @@
 
 | 方法 | 路径 | 认证 | 返回 |
 | --- | --- | --- | --- |
-| GET | `/api/health` | Master key | `{ status, version: 2 }` |
+| GET | `/api/health` | None | `{ status, version: 2 }` |
 
 ## 字体目录
 

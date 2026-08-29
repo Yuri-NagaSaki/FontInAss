@@ -118,8 +118,13 @@ bun run data:reindex
 | `DB_PATH` | `./data/fontinass-v2.db` | v2 数据库路径 |
 | `PENDING_DIR` | `./data/pending-v2` | 待审核字幕包目录 |
 | `LOG_DIR` | `./data/logs` | 服务日志目录 |
-| `SUBSET_CONCURRENCY` | `5` | 并发子集化数量 |
-| `CACHE_MAX_ENTRIES` | `500` | 字幕结果内存缓存条目数 |
+| `SUBSET_CONCURRENCY` | `5` | 批量字幕并行处理数 |
+| `SUBSET_MAX_FILES` | `20` | 单次批量字幕文件数上限 |
+| `SUBSET_MAX_FILE_SIZE` | `67108864` | 单个字幕文件最大字节数 |
+| `SUBSET_MAX_BATCH_SIZE` | `268435456` | 单次批量字幕总字节上限 |
+| `CACHE_MAX_ENTRIES` | `100` | 字幕结果内存缓存条目数 |
+| `CACHE_MAX_BYTES` | `67108864` | 字幕结果内存缓存字节上限 |
+| `ACTIVITY_RETENTION_DAYS` | `30` | 处理日志保留天数 |
 | `UPLOAD_TARGET_DIR` | `CatCat-Fonts/` | Web/API 字体投稿目标目录 |
 | `PUBLIC_UPLOAD_MAX_FILES` | `20` | 公开页面单批最大文件数 |
 | `PUBLIC_UPLOAD_MAX_FILE_SIZE` | `104857600` | 公开页面单个字体文件最大字节数 |

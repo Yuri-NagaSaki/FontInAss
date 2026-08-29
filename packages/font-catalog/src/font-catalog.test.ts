@@ -8,7 +8,7 @@ const rows: FontLookupRow[] = [
 const repository = {
   lookupByNames: (names: string[]) => rows.filter((row) => names.includes(row.nameLower)),
   lookupByLooseNames: () => [], findExistingKeys: () => new Set<string>(), insertFile: () => {}, replaceFaces: () => {},
-  listBrokenFiles: () => [], listFileEntries: () => [], listFiles: ({ page, limit }: { page: number; limit: number }) => ({ total: 0, page, limit, data: [] }),
+  listBrokenFiles: () => [], listFileEntries: () => [], countFiles: () => 0, listFiles: ({ page, limit }: { page: number; limit: number }) => ({ total: 0, page, limit, data: [] }),
   countByTopFolder: () => [], findById: () => null, findByKey: () => null, findBySha256: () => null, setSha256: () => {}, deleteByIds: () => [],
 } satisfies FontCatalogRepository;
 const files = { ensureReady: () => {}, get: async () => null, put: async () => {}, delete: async () => {}, exists: () => false, browse: () => ({ folders: [], files: [] }), list: () => [] } satisfies FontFileStore;

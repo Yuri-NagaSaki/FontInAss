@@ -36,8 +36,7 @@ const dragActive = ref(false);
 let dragCounter = 0;
 
 // ─── Concurrency pool ─────────────────────────────────────────────────────────
-// Local deployment — no Worker memory cap, bump concurrency for faster batch processing
-const MAX_CONCURRENT = 6;
+const MAX_CONCURRENT = 3;
 
 async function runWithConcurrency<T>(
   tasks: Array<() => Promise<T>>,
@@ -90,7 +89,7 @@ const processFile = async (entry: FileEntry) => {
 };
 
 const addFiles = async (fileList: FileList | File[]) => {
-  const supported = Array.from(fileList).filter(f => /\.(ass|ssa)$/i.test(f.name));
+  const supported = Array.from(fileList).filter(f => /\.(ass|ssa|srt)$/i.test(f.name));
   if (supported.length === 0) return;
   const entries: FileEntry[] = supported.map(f => reactive({
     key: `${Date.now()}_${f.name}`,

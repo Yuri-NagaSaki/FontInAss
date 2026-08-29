@@ -120,46 +120,73 @@ export function createApp(container: AppContainer) {
   const subsetRoutes = new Hono().post("/", async (c) => {
     const startedAt = Date.now();
     const options = subsetOptionsFromHeaders(c);
-    const files: Array<{ name: string; bytes: Uint8Array }> = [];
-    if ((c.req.header("content-type") ?? "").includes("multipart/form-data")) {
-      const form = await c.req.formData();
-      const entries = form.getAll("file").filter((entry): entry is File => entry instanceof File);
-      if (entries.length > 100) return binarySubsetResponse(CODE.CLIENT_ERROR, ["Too many files (max 100)"], null);
-      for (const file of entries) files.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
-    } else {
-      files.push({ name: decodeHeader(c.req.header("x-filename")) || "subtitle.ass", bytes: new Uint8Array(await c.req.arrayBuffer()) });
-    }
-    if (!files.length) return binarySubsetResponse(CODE.CLIENT_ERROR, ["No file provided"], null);
+    const maxFiles = container.config.subsetMaxFiles;
+    const maxFileSize = container.config.subsetMaxFileSize;
+    const maxBatchSize = container.config.subsetMaxBatchSize;
     const clientIp = hashClientIp(c);
     const processOne = async (file: { name: string; bytes: Uint8Array }) => {
       const started = Date.now();
       const result = await container.subtitles.process({ filename: file.name, bytes: file.bytes, options });
       container.activity.record({
         filename: file.name, clientIp, code: result.code, messages: result.messages,
-        missingFonts: missingFonts(result.messages), fontCount: 0, fileSize: file.bytes.byteLength, elapsedMs: Date.now() - started,
+        missingFonts: missingFonts(result.messages), fontCount: result.fontCount ?? 0, fileSize: file.bytes.byteLength, elapsedMs: Date.now() - started,
       });
       return result;
     };
-    if (files.length === 1) {
-      try {
-        const result = await processOne(files[0]);
-        return binarySubsetResponse(result.code, result.messages, result.data);
-      } catch (error) {
-        container.logger.error("[subset] unhandled processing error", error);
-        return binarySubsetResponse(CODE.SERVER_ERROR, ["Internal server error"], null);
+
+    const tooLarge = (label: string) => binarySubsetResponse(CODE.CLIENT_ERROR, [label], null);
+
+    if ((c.req.header("content-type") ?? "").includes("multipart/form-data")) {
+      const form = await c.req.formData();
+      const entries = form.getAll("file").filter((entry): entry is File => entry instanceof File);
+      if (!entries.length) return binarySubsetResponse(CODE.CLIENT_ERROR, ["No file provided"], null);
+      if (entries.length > maxFiles) return tooLarge(`Too many files (max ${maxFiles})`);
+      let declared = 0;
+      for (const file of entries) {
+        if (file.size > maxFileSize) return tooLarge(`${file.name} exceeds the subtitle size limit`);
+        declared += file.size;
       }
+      if (declared > maxBatchSize) return tooLarge("Subtitle batch exceeds the size limit");
+
+      if (entries.length === 1) {
+        try {
+          const bytes = new Uint8Array(await entries[0].arrayBuffer());
+          if (bytes.byteLength > maxFileSize) return tooLarge(`${entries[0].name} exceeds the subtitle size limit`);
+          const result = await processOne({ name: entries[0].name, bytes });
+          return binarySubsetResponse(result.code, result.messages, result.data);
+        } catch (error) {
+          container.logger.error("[subset] unhandled processing error", error);
+          return binarySubsetResponse(CODE.SERVER_ERROR, ["Internal server error"], null);
+        }
+      }
+
+      const results: Array<{ filename: string; code: number; messages: string[]; data: string | null }> = [];
+      for (let offset = 0; offset < entries.length; offset += container.config.subsetConcurrency) {
+        const chunk = entries.slice(offset, offset + container.config.subsetConcurrency);
+        const loaded = await Promise.all(chunk.map(async (file) => ({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })));
+        if (loaded.some((file) => file.bytes.byteLength > maxFileSize)) {
+          return tooLarge("A subtitle file exceeds the size limit");
+        }
+        const settled = await Promise.allSettled(loaded.map(processOne));
+        settled.forEach((item, index) => {
+          if (item.status === "fulfilled") results.push({ filename: chunk[index].name, code: item.value.code, messages: item.value.messages, data: item.value.data ? Buffer.from(item.value.data).toString("base64") : null });
+          else results.push({ filename: chunk[index].name, code: CODE.SERVER_ERROR, messages: ["Internal server error"], data: null });
+        });
+      }
+      container.logger.info(`[subset] batch=${entries.length} elapsed=${Date.now() - startedAt}ms`);
+      return c.json({ results }, results.some((result) => result.code >= 400) ? 207 : 200);
     }
-    const results: Array<{ filename: string; code: number; messages: string[]; data: string | null }> = [];
-    for (let offset = 0; offset < files.length; offset += container.config.subsetConcurrency) {
-      const chunk = files.slice(offset, offset + container.config.subsetConcurrency);
-      const settled = await Promise.allSettled(chunk.map(processOne));
-      settled.forEach((item, index) => {
-        if (item.status === "fulfilled") results.push({ filename: chunk[index].name, code: item.value.code, messages: item.value.messages, data: item.value.data ? Buffer.from(item.value.data).toString("base64") : null });
-        else results.push({ filename: chunk[index].name, code: CODE.SERVER_ERROR, messages: ["Internal server error"], data: null });
-      });
+
+    const bytes = new Uint8Array(await c.req.arrayBuffer());
+    if (!bytes.byteLength) return binarySubsetResponse(CODE.CLIENT_ERROR, ["No file provided"], null);
+    if (bytes.byteLength > maxFileSize) return tooLarge("Subtitle exceeds the size limit");
+    try {
+      const result = await processOne({ name: decodeHeader(c.req.header("x-filename")) || "subtitle.ass", bytes });
+      return binarySubsetResponse(result.code, result.messages, result.data);
+    } catch (error) {
+      container.logger.error("[subset] unhandled processing error", error);
+      return binarySubsetResponse(CODE.SERVER_ERROR, ["Internal server error"], null);
     }
-    container.logger.info(`[subset] batch=${files.length} elapsed=${Date.now() - startedAt}ms`);
-    return c.json({ results }, results.some((result) => result.code >= 400) ? 207 : 200);
   });
 
   const archiveRoutes = new Hono()
@@ -340,7 +367,7 @@ export function createApp(container: AppContainer) {
     });
 
   const api = new Hono()
-    .get("/health", admin, (c) => {
+    .get("/health", (c) => {
       try { container.database.ping(); return c.json({ status: "ok" as const, version: 2 as const }, 200, { "Cache-Control": "no-store" }); }
       catch { return c.json({ status: "error" as const, version: 2 as const }, 500); }
     })
@@ -357,7 +384,10 @@ export function createApp(container: AppContainer) {
   const app = new Hono()
     .use("*", async (c, next) => { const start = Date.now(); await next(); container.logger.debug(`${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - start}ms`); })
     .use("*", cors({ origin: container.config.corsOrigin, allowHeaders: ["*"], allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], exposeHeaders: ["X-Code", "X-Message", "Content-Disposition"] }))
-    .use("*", compress())
+    .use("*", async (c, next) => {
+      if (c.req.path === "/api/subset") return next();
+      return compress()(c, next);
+    })
     .route("/api", api);
 
   app.use("/assets/*", serveStatic({ root: "../web/dist" }));

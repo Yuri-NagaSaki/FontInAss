@@ -63,7 +63,11 @@ export function createContainer(config = loadRuntimeConfig()): AppContainer {
     concurrency: config.subsetConcurrency,
   });
   const activity = new ActivityLog(new SqliteActivityRepository(database));
-  const subtitles = new DefaultSubtitleProcessor(fonts, logger, { cacheEntries: config.cacheMaxEntries });
+  const subtitles = new DefaultSubtitleProcessor(fonts, logger, {
+    cacheEntries: config.cacheMaxEntries,
+    cacheBytes: config.cacheMaxBytes,
+    cacheTtlMs: config.cacheTtlMs,
+  });
 
   let interval: ReturnType<typeof setInterval> | null = null;
   let schedulerEnabled = false;
@@ -108,6 +112,12 @@ export function createContainer(config = loadRuntimeConfig()): AppContainer {
     async bootstrap() {
       fontFiles.ensureReady();
       logger.prune();
+      if (!config.apiKey) logger.warn("[bootstrap] API_KEY is empty; font management endpoints are unauthenticated");
+      const cutoff = new Date(Date.now() - config.activityRetentionDays * 86_400_000).toISOString();
+      const pruned = activity.prune(cutoff);
+      if (pruned) logger.info(`[bootstrap] pruned ${pruned} processing events older than ${config.activityRetentionDays} days`);
+      uploadAccess.pruneRateLimits(cutoff.slice(0, 10), cutoff.slice(0, 16));
+      database.raw.run("PRAGMA wal_checkpoint(PASSIVE)");
       if (archives.listPublished().length === 0 && published.isConfigured()) {
         try {
           const restored = await archives.restoreFromManifest();

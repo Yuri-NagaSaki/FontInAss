@@ -43,7 +43,6 @@ CREATE TABLE IF NOT EXISTS font_files (
   sha256 TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
-DROP INDEX IF EXISTS idx_font_files_sha256;
 CREATE INDEX IF NOT EXISTS idx_font_files_sha256 ON font_files(sha256) WHERE sha256 IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS font_faces (
@@ -369,6 +368,10 @@ export class SqliteFontCatalogRepository implements FontCatalogRepository {
 
   listFileEntries(): FontFileRecord[] {
     return this.database.raw.query<FontFileRow, []>("SELECT * FROM font_files ORDER BY created_at, id").all().map(toRecord);
+  }
+
+  countFiles(): number {
+    return this.database.raw.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM font_files").get()?.count ?? 0;
   }
 
   listFiles(query: { page: number; limit: number; search: string }) {
@@ -774,6 +777,12 @@ export class SqliteUploadAccessRepository implements UploadAccessRepository {
     })();
   }
 
+  pruneRateLimits(cutoffDate: string, cutoffMinute: string): void {
+    this.database.raw.query("DELETE FROM api_application_rate_limits WHERE application_date < ?").run(cutoffDate);
+    this.database.raw.query("DELETE FROM public_font_upload_rate_limits WHERE minute_bucket < ?").run(cutoffMinute);
+    this.database.raw.query("DELETE FROM upload_rate_limits WHERE upload_date < ?").run(cutoffDate);
+  }
+
   recordSubmission(tokenId: string, results: ApiUploadResult[], context: UploadRequestContext, uploadedAt: string): void {
     const accepted = results.filter((result) => result.status === "success" || result.status === "duplicate");
     const acceptedBytes = accepted.reduce((total, result) => total + result.size, 0);
@@ -880,15 +889,22 @@ export class SqliteActivityRepository implements ActivityRepository {
   }
 
   missingFonts(limit: number, showResolved: boolean): { total: number; data: MissingFontRanking[] } {
-    const resolved = new Map(this.database.raw.query<{ font_name: string; resolved_at: string }, []>("SELECT * FROM resolved_fonts").all().map((row) => [row.font_name, row.resolved_at]));
-    const counts = new Map<string, number>();
-    for (const row of this.database.raw.query<{ missing_fonts_json: string }, []>("SELECT missing_fonts_json FROM processing_events WHERE missing_fonts_json <> '[]'").all()) {
-      for (const name of parseStringArray(row.missing_fonts_json)) counts.set(name, (counts.get(name) ?? 0) + 1);
-    }
-    let data = [...counts].map(([font_name, count]) => ({ font_name, count, resolved: resolved.has(font_name), resolved_at: resolved.get(font_name) ?? null }));
-    if (!showResolved) data = data.filter((item) => !item.resolved);
-    data.sort((a, b) => b.count - a.count || a.font_name.localeCompare(b.font_name));
+    const rows = this.database.raw.query<{ font_name: string; count: number; resolved_at: string | null }, []>(`
+      SELECT j.value AS font_name, COUNT(*) AS count, r.resolved_at
+      FROM processing_events e, json_each(e.missing_fonts_json) j
+      LEFT JOIN resolved_fonts r ON r.font_name = j.value
+      WHERE e.missing_fonts_json <> '[]' AND typeof(j.value) = 'text' AND length(j.value) > 0
+      GROUP BY j.value
+      ORDER BY count DESC, font_name ASC
+    `).all();
+    const data = rows
+      .map((row) => ({ font_name: row.font_name, count: row.count, resolved: Boolean(row.resolved_at), resolved_at: row.resolved_at }))
+      .filter((item) => showResolved || !item.resolved);
     return { total: data.length, data: data.slice(0, limit) };
+  }
+
+  prune(cutoffIso: string): number {
+    return this.database.raw.query("DELETE FROM processing_events WHERE processed_at < ?").run(cutoffIso).changes;
   }
 
   resolveFont(name: string): void {

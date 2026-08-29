@@ -211,6 +211,7 @@ export const SubsetResultSchema = z.object({
   code: CodeSchema,
   messages: z.array(z.string()),
   data: z.custom<Uint8Array>((value) => value instanceof Uint8Array).nullable(),
+  fontCount: z.number().int().nonnegative().default(0),
 });
 export type SubsetResult = z.infer<typeof SubsetResultSchema>;
 

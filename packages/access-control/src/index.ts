@@ -48,6 +48,7 @@ export interface UploadAccessRepository {
 
   consumeApplicationRateLimit(ipHash: string, date: string, limit: number): boolean;
   consumePublicUploadRateLimit(ipHash: string, minute: string, limit: number): boolean;
+  pruneRateLimits(cutoffDate: string, cutoffMinute: string): void;
   recordSubmission(tokenId: string, results: ApiUploadResult[], context: UploadRequestContext, uploadedAt: string): void;
   listHistory(query: { tokenId?: string; status?: ApiUploadStatus; page: number; limit: number }): ApiHistoryResponse;
   stats(): ApiTokenStats;
@@ -184,6 +185,10 @@ export class UploadAccess {
       now.toISOString().slice(0, 16),
       this.options.publicUploadRequestsPerMinute,
     );
+  }
+
+  pruneRateLimits(cutoffDate: string, cutoffMinute: string): void {
+    this.repository.pruneRateLimits(cutoffDate, cutoffMinute);
   }
 
   recordSubmission(tokenId: string, results: ApiUploadResult[], context: UploadRequestContext): void {
