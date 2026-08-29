@@ -129,7 +129,136 @@ function formatNamesForWriter(names: FontNames, writerTemplate: unknown): unknow
 
 const OPTIONAL_LAYOUT_TABLES = new Set(["GDEF", "GPOS", "GSUB"]);
 const VERTICAL_TABLES = new Set(["vhea", "vmtx", "VORG"]);
+const GSUB_FEATURES = ["vert", "vrt2", "vkna", "ccmp", "liga", "clig", "rlig", "locl"] as const;
+const GSUB_SCRIPTS = ["DFLT", "hani", "kana", "hang", "latn"];
 const ORIGINAL_SFNT = Symbol("originalSfnt");
+
+interface GsubSubstitution {
+  getScriptNames?(): string[];
+  getSingle?(feature: string, script?: string): Array<{ sub: number; by: number }>;
+  getMultiple?(feature: string, script?: string): Array<{ sub: number; by: number[] }>;
+  getLigatures?(feature: string, script?: string): Array<{ sub: number[]; by: number }>;
+  addSingle?(feature: string, substitution: { sub: number; by: number }, script?: string): void;
+  addMultiple?(feature: string, substitution: { sub: number; by: number[] }, script?: string): void;
+  addLigature?(feature: string, ligature: { sub: number[]; by: number }, script?: string): void;
+}
+
+function gsubApi(font: opentype.Font): GsubSubstitution | null {
+  return (font as unknown as { substitution?: GsubSubstitution }).substitution ?? null;
+}
+
+function gsubScripts(subst: GsubSubstitution): string[] {
+  const names = subst.getScriptNames?.() ?? [];
+  return [...new Set([...names, ...GSUB_SCRIPTS])];
+}
+
+function closeGsubGlyphs(font: opentype.Font, needed: Set<number>): void {
+  const subst = gsubApi(font);
+  if (!subst) return;
+  const scripts = gsubScripts(subst);
+  let growing = true;
+  while (growing) {
+    growing = false;
+    for (const feature of GSUB_FEATURES) {
+      for (const script of scripts) {
+        try {
+          for (const rule of subst.getSingle?.(feature, script) ?? []) {
+            if (needed.has(rule.sub) && !needed.has(rule.by)) { needed.add(rule.by); growing = true; }
+          }
+          for (const rule of subst.getMultiple?.(feature, script) ?? []) {
+            if (!needed.has(rule.sub)) continue;
+            for (const glyphId of rule.by ?? []) {
+              if (!needed.has(glyphId)) { needed.add(glyphId); growing = true; }
+            }
+          }
+          for (const rule of subst.getLigatures?.(feature, script) ?? []) {
+            if (rule.sub.every((glyphId) => needed.has(glyphId)) && !needed.has(rule.by)) {
+              needed.add(rule.by);
+              growing = true;
+            }
+          }
+        } catch {
+          // A malformed lookup must not abort subsetting.
+        }
+      }
+    }
+  }
+}
+
+function rewriteGsub(orig: opentype.Font, next: opentype.Font, remap: Map<number, number>): void {
+  const src = gsubApi(orig);
+  const dst = gsubApi(next);
+  if (!src || !dst) return;
+
+  const sourceScripts = gsubScripts(src);
+  const writeScripts = [...new Set(["DFLT", "hani", "latn", ...sourceScripts])];
+  try {
+    for (const feature of GSUB_FEATURES) {
+      const singles: Array<{ sub: number; by: number }> = [];
+      const multiples: Array<{ sub: number; by: number[] }> = [];
+      const ligatures: Array<{ sub: number[]; by: number }> = [];
+      for (const script of sourceScripts) {
+        try {
+          for (const rule of src.getSingle?.(feature, script) ?? []) {
+            const sub = remap.get(rule.sub);
+            const by = remap.get(rule.by);
+            if (sub !== undefined && by !== undefined) singles.push({ sub, by });
+          }
+          for (const rule of src.getMultiple?.(feature, script) ?? []) {
+            const sub = remap.get(rule.sub);
+            const by = (rule.by ?? []).map((glyphId) => remap.get(glyphId));
+            if (sub !== undefined && by.every((glyphId): glyphId is number => glyphId !== undefined)) {
+              multiples.push({ sub, by });
+            }
+          }
+          for (const rule of src.getLigatures?.(feature, script) ?? []) {
+            const components = rule.sub.map((glyphId) => remap.get(glyphId));
+            const by = remap.get(rule.by);
+            if (by !== undefined && components.every((glyphId): glyphId is number => glyphId !== undefined)) {
+              ligatures.push({ sub: components, by });
+            }
+          }
+        } catch {
+          // Skip one script/feature pair.
+        }
+      }
+      for (const script of writeScripts) {
+        for (const rule of uniqueKey(singles, (item) => `${item.sub}->${item.by}`)) dst.addSingle?.(feature, rule, script);
+        for (const rule of uniqueKey(multiples, (item) => `${item.sub}->${item.by.join(",")}`)) dst.addMultiple?.(feature, rule, script);
+        for (const rule of uniqueKey(ligatures, (item) => `${item.sub.join("+")}->${item.by}`)) dst.addLigature?.(feature, rule, script);
+      }
+    }
+  } catch {
+    // Output remains usable without GSUB.
+  }
+}
+
+function uniqueKey<T>(items: T[], key: (item: T) => string): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const item of items) {
+    const id = key(item);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    result.push(item);
+  }
+  return result;
+}
+
+function copyGlyphOutline(orig: opentype.Font, origGlyph: opentype.Glyph): opentype.Path {
+  const rendered = origGlyph.getPath(0, 0, orig.unitsPerEm, undefined, orig);
+  const newPath = new opentype.Path();
+  for (const cmd of rendered.commands) {
+    switch (cmd.type) {
+      case "M": newPath.moveTo(cmd.x, -cmd.y); break;
+      case "L": newPath.lineTo(cmd.x, -cmd.y); break;
+      case "C": newPath.curveTo(cmd.x1!, -cmd.y1!, cmd.x2!, -cmd.y2!, cmd.x, -cmd.y); break;
+      case "Q": newPath.quadraticCurveTo(cmd.x1!, -cmd.y1!, cmd.x, -cmd.y); break;
+      case "Z": newPath.close(); break;
+    }
+  }
+  return newPath;
+}
 
 interface OriginalSfnt {
   bytes: Uint8Array;
@@ -477,41 +606,35 @@ export function subsetParsedFont(
 
     const glyphs: opentype.Glyph[] = [notdef];
     const originalGlyphIndices: number[] = [0];
-    const seen = new Set<number>([0]);
+    const needed = new Set<number>([0]);
+    const unicodeForGlyph = new Map<number, number>();
     const missing: string[] = [];
 
     for (const cp of unicodes) {
-      if (seen.has(cp)) continue;
       const char = String.fromCodePoint(cp);
       const glyphIndex = orig.charToGlyphIndex(char);
       const origGlyph = glyphIndex ? orig.glyphs.get(glyphIndex) : null;
-
       if (!origGlyph || glyphIndex === 0) {
         missing.push(char);
         continue;
       }
+      needed.add(glyphIndex);
+      if (!unicodeForGlyph.has(glyphIndex)) unicodeForGlyph.set(glyphIndex, cp);
+    }
+    closeGsubGlyphs(orig, needed);
 
-      const rendered = origGlyph.getPath(0, 0, orig.unitsPerEm, undefined, orig);
-      const newPath = new opentype.Path();
-
-      for (const cmd of rendered.commands) {
-        switch (cmd.type) {
-          case "M": newPath.moveTo(cmd.x, -cmd.y); break;
-          case "L": newPath.lineTo(cmd.x, -cmd.y); break;
-          case "C": newPath.curveTo(cmd.x1!, -cmd.y1!, cmd.x2!, -cmd.y2!, cmd.x, -cmd.y); break;
-          case "Q": newPath.quadraticCurveTo(cmd.x1!, -cmd.y1!, cmd.x, -cmd.y); break;
-          case "Z": newPath.close(); break;
-        }
-      }
-
+    for (const glyphIndex of needed) {
+      if (glyphIndex === 0) continue;
+      const origGlyph = orig.glyphs.get(glyphIndex);
+      if (!origGlyph) continue;
+      const unicode = unicodeForGlyph.get(glyphIndex);
       glyphs.push(new opentype.Glyph({
-        name: origGlyph.name || `glyph_${cp}`,
-        unicode: cp,
+        name: origGlyph.name || (unicode !== undefined ? `glyph_${unicode}` : `gid_${glyphIndex}`),
+        ...(unicode !== undefined ? { unicode } : {}),
         advanceWidth: origGlyph.advanceWidth,
-        path: newPath,
+        path: copyGlyphOutline(orig, origGlyph),
       }));
       originalGlyphIndices.push(glyphIndex);
-      seen.add(cp);
     }
 
     // Pick a sensible ASCII family/style for the constructor — opentype.js uses these
@@ -627,6 +750,10 @@ export function subsetParsedFont(
       (newFont as unknown as { names: unknown }).names = formatNamesForWriter(merged, rawNewNames);
     }
     if (os2Table) newFont.tables.os2 = os2Table as typeof newFont.tables.os2;
+
+    const remap = new Map<number, number>();
+    originalGlyphIndices.forEach((oldIndex, newIndex) => remap.set(oldIndex, newIndex));
+    rewriteGsub(orig, newFont, remap);
 
     const subsetBytes = preserveVerticalLayoutTables(new Uint8Array(newFont.toArrayBuffer()), orig, originalGlyphIndices);
     const encoded = uuencode(subsetBytes);

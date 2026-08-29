@@ -129,6 +129,76 @@ function decodeSubsetFont(encoded: string): Uint8Array {
   return uudecode(encoded.split("\n").slice(1).join("\n"));
 }
 
+interface SubstitutionApi {
+  addSingle(feature: string, substitution: { sub: number; by: number }, script?: string): void;
+  addLigature(feature: string, ligature: { sub: number[]; by: number }, script?: string): void;
+  getSingle(feature: string, script?: string): Array<{ sub: number; by: number }>;
+  getLigatures(feature: string, script?: string): Array<{ sub: number[]; by: number }>;
+}
+
+function substitution(font: opentype.Font): SubstitutionApi {
+  return (font as unknown as { substitution: SubstitutionApi }).substitution;
+}
+
+function parseSubset(encoded: string): opentype.Font {
+  return parseFontFace(decodeSubsetFont(encoded), 0);
+}
+
+function makeVertGsubFont(): Uint8Array {
+  const horizontal = new opentype.Path();
+  horizontal.moveTo(0, 0);
+  horizontal.lineTo(600, 0);
+  horizontal.lineTo(600, 100);
+  horizontal.close();
+  const vertical = new opentype.Path();
+  vertical.moveTo(0, 0);
+  vertical.lineTo(100, 0);
+  vertical.lineTo(100, 800);
+  vertical.close();
+  const font = new opentype.Font({
+    familyName: "VertGsub",
+    styleName: "Regular",
+    unitsPerEm: 1000,
+    ascender: 800,
+    descender: -200,
+    glyphs: [
+      new opentype.Glyph({ name: ".notdef", advanceWidth: 500, path: new opentype.Path() }),
+      new opentype.Glyph({ name: "A", unicode: 65, advanceWidth: 600, path: horizontal }),
+      new opentype.Glyph({ name: "A.vert", advanceWidth: 800, path: vertical }),
+    ],
+  });
+  substitution(font).addSingle("vert", { sub: 1, by: 2 });
+  return new Uint8Array(font.toArrayBuffer());
+}
+
+function makeLigaFont(): Uint8Array {
+  const stem = new opentype.Path();
+  stem.moveTo(0, 0);
+  stem.lineTo(50, 0);
+  stem.lineTo(50, 700);
+  stem.close();
+  const wide = new opentype.Path();
+  wide.moveTo(0, 0);
+  wide.lineTo(900, 0);
+  wide.lineTo(900, 700);
+  wide.close();
+  const font = new opentype.Font({
+    familyName: "LigaFixture",
+    styleName: "Regular",
+    unitsPerEm: 1000,
+    ascender: 800,
+    descender: -200,
+    glyphs: [
+      new opentype.Glyph({ name: ".notdef", advanceWidth: 500, path: new opentype.Path() }),
+      new opentype.Glyph({ name: "f", unicode: 102, advanceWidth: 400, path: stem }),
+      new opentype.Glyph({ name: "i", unicode: 105, advanceWidth: 300, path: stem }),
+      new opentype.Glyph({ name: "fi", advanceWidth: 700, path: wide }),
+    ],
+  });
+  substitution(font).addLigature("liga", { sub: [1, 2], by: 3 });
+  return new Uint8Array(font.toArrayBuffer());
+}
+
 describe("subsetParsedFont", () => {
   test("preserves vertical layout tables needed by ASS @ fonts", () => {
     const parsed = parseFontFace(makeVerticalFixtureFont(), 0);
@@ -140,5 +210,31 @@ describe("subsetParsedFont", () => {
     expect(tables.has("vhea")).toBe(true);
     expect(tables.has("vmtx")).toBe(true);
     expect(tables.has("VORG")).toBe(true);
+  });
+
+  test("keeps GSUB vert alternates that cmap does not name", () => {
+    const parsed = parseFontFace(makeVertGsubFont(), 0);
+    expect(substitution(parsed).getSingle("vert")).toEqual([{ sub: 1, by: 2 }]);
+
+    const result = subsetParsedFont(parsed, "VertGsub", 400, false, new Set([65]), "FVERT002", "FVERT002");
+    expect(result.error).toBeNull();
+    const subset = parseSubset(result.encoded);
+    const glyphCount = subset.numGlyphs ?? subset.glyphs.length;
+    expect(glyphCount).toBe(3);
+    expect(substitution(subset).getSingle("vert")).toEqual([{ sub: 1, by: 2 }]);
+    expect(subset.charToGlyphIndex("A")).toBe(1);
+    expect(subset.glyphs.get(2)?.advanceWidth).toBe(800);
+  });
+
+  test("keeps liga glyphs that are only reachable through GSUB", () => {
+    const parsed = parseFontFace(makeLigaFont(), 0);
+    expect(substitution(parsed).getLigatures("liga")).toEqual([{ sub: [1, 2], by: 3 }]);
+
+    const result = subsetParsedFont(parsed, "LigaFixture", 400, false, new Set([102, 105]), "FLIGA001", "FLIGA001");
+    expect(result.error).toBeNull();
+    const subset = parseSubset(result.encoded);
+    expect(subset.numGlyphs ?? subset.glyphs.length).toBe(4);
+    expect(substitution(subset).getLigatures("liga")).toEqual([{ sub: [1, 2], by: 3 }]);
+    expect(subset.glyphs.get(3)?.advanceWidth).toBe(700);
   });
 });
