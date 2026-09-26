@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
-  ScrollText, Search, ChevronLeft, ChevronRight, ChevronDown,
+  Search, ChevronLeft, ChevronRight, ChevronDown,
   Activity, CalendarDays, CheckCircle2, AlertTriangle, XCircle, Ban, Check, Undo2,
 } from "lucide-vue-next";
 import {
@@ -95,11 +95,11 @@ function formatDate(iso: string): string {
 }
 
 function codeLabel(code: number): string {
-  if (code === 200) return "Success";
-  if (code === 201) return "Warning";
-  if (code === 300) return "Missing";
-  if (code === 400) return "Bad Request";
-  return "Error";
+  if (code === 200) return t("200");
+  if (code === 201) return t("201");
+  if (code === 300) return t("300");
+  if (code === 400) return t("400");
+  return t("statusError");
 }
 
 function codeBadgeVariant(code: number): "success" | "warning" | "error" {
@@ -135,18 +135,7 @@ function toggleExpand(id: string) {
 
 <template>
   <div class="flex flex-col gap-5">
-    <!-- Header -->
-    <div class="card bg-gradient-to-br from-white to-sakura-50/40 p-6">
-      <div class="flex items-center gap-3">
-        <div class="flex h-10 w-10 items-center justify-center rounded-xl bg-sakura-100 text-sakura-500">
-          <ScrollText class="h-5 w-5" />
-        </div>
-        <div>
-          <h1 class="font-display text-xl font-bold text-ink-900">{{ t('logsTitle') }}</h1>
-          <p class="text-sm text-ink-400">{{ t('logsDescription') }}</p>
-        </div>
-      </div>
-    </div>
+    <header class="page-heading"><h1>{{ t('logsTitle') }}</h1><p>{{ t('logsDescription') }}</p></header>
 
     <!-- Stats cards -->
     <div v-if="stats" class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">

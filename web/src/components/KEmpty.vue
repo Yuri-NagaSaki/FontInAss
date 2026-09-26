@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Inbox } from "lucide-vue-next";
 defineProps<{
   title?: string;
   description?: string;
@@ -8,22 +9,8 @@ defineProps<{
 
 <template>
   <div class="flex flex-col items-center justify-center py-16 gap-4 text-center">
-    <!-- Sakura illustration (CSS-only) -->
-    <div class="relative w-20 h-20 mb-2">
-      <div class="absolute inset-0 rounded-full bg-sakura-50 flex items-center justify-center">
-        <span class="text-4xl leading-none">{{ icon ?? '🌸' }}</span>
-      </div>
-      <!-- Decorative petals -->
-      <div
-        v-for="i in 5" :key="i"
-        class="absolute w-3 h-3 rounded-full bg-sakura-200 opacity-60"
-        :style="{
-          top:  `${50 + 48 * Math.sin((i-1) * 72 * Math.PI / 180)}%`,
-          left: `${50 + 48 * Math.cos((i-1) * 72 * Math.PI / 180)}%`,
-          transform: 'translate(-50%, -50%)',
-        }"
-      />
-    </div>
+    <span v-if="icon" class="text-3xl leading-none">{{ icon }}</span>
+    <Inbox v-else class="h-8 w-8 text-ink-400" />
     <h3 class="font-display font-semibold text-ink-800 text-base">
       {{ title ?? '暂无内容' }}
     </h3>

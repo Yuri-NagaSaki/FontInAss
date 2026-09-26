@@ -10,7 +10,6 @@ import { subsetFile } from "../api/client";
 import { formatBytes } from "../lib/format";
 import KButton from "../components/KButton.vue";
 import KBadge from "../components/KBadge.vue";
-import KEmpty from "../components/KEmpty.vue";
 import { useSettings } from "../composables/useSettings";
 import { useConfirm } from "../composables/useConfirm";
 
@@ -162,7 +161,7 @@ const onDrop = (e: DragEvent) => {
 
 const onClickUpload = () => {
   const input = document.createElement("input");
-  input.type = "file"; input.accept = ".ass,.ssa"; input.multiple = true;
+  input.type = "file"; input.accept = ".ass,.ssa,.srt"; input.multiple = true;
   input.onchange = (e) => { const fs = (e.target as HTMLInputElement).files; if (fs) addFiles(fs); };
   input.click();
 };
@@ -275,14 +274,15 @@ const summaryText = (entry: FileEntry) => {
 
 <template>
   <div>
+  <header class="page-heading"><h1>{{ t('subset') }}</h1><p>{{ t('community.subsetDesc') }}</p></header>
   <!-- Drag overlay -->
   <transition name="fade">
     <div
       v-if="dragActive && files.length > 0"
-      class="fixed inset-0 z-50 pointer-events-none flex items-center justify-center bg-surface/60 backdrop-blur-sm"
+      class="fixed inset-0 z-50 pointer-events-none flex items-center justify-center bg-surface/95"
     >
       <div class="drop-zone w-64 h-40 flex flex-col items-center justify-center gap-3 pointer-events-none">
-        <span class="text-5xl leading-none">🌸</span>
+        <FileText class="h-12 w-12 text-sakura-500" />
         <p class="font-medium text-sakura-500">{{ t("dropHere") }}</p>
       </div>
     </div>
@@ -294,20 +294,27 @@ const summaryText = (entry: FileEntry) => {
     <div
       class="drop-zone relative w-full flex flex-col items-center justify-center gap-4 py-14 px-6 cursor-pointer transition-all duration-200"
       :class="dragActive ? 'ring-2 ring-sakura-400 scale-[1.01]' : ''"
+      role="button"
+      tabindex="0"
+      :aria-label="t('chooseFiles')"
+      @keydown.enter.prevent="onClickUpload"
+      @keydown.space.prevent="onClickUpload"
       @click="onClickUpload"
     >
       <div class="w-16 h-16 rounded-2xl bg-sakura-50 flex items-center justify-center">
-        <span class="text-3xl leading-none">🌸</span>
+        <FileText class="h-8 w-8 text-sakura-500" />
       </div>
       <div class="text-center space-y-1">
         <p class="font-display font-semibold text-ink-900 text-lg">{{ t("dropZoneTitle") }}</p>
         <p class="text-sm text-ink-400">{{ t("dropZoneHint") }}</p>
       </div>
-      <div class="flex items-center gap-2 px-5 py-2 rounded-xl bg-sakura-400 text-white text-sm font-medium pointer-events-none">
+      <div class="flex items-center gap-2 px-5 py-2 rounded-full bg-sakura-400 text-[var(--accent-ink)] text-sm font-medium pointer-events-none">
         <FileText class="w-4 h-4" />
         {{ t("chooseFiles") }}
       </div>
     </div>
+
+    <div class="page-note"><p>{{ t('community.subsetSettingsHint') }}</p><p>{{ t('community.subsetHelp') }} {{ t('community.subsetHelpDesc') }} <RouterLink to="/upload">{{ t('community.contributeFont') }}</RouterLink></p></div>
 
     <!-- ─── Stats + actions strip ─────────────────────────────────────────── -->
     <div v-if="files.length > 0" class="flex items-center gap-3 flex-wrap">
@@ -504,7 +511,6 @@ const summaryText = (entry: FileEntry) => {
       </TransitionGroup>
     </div>
 
-    <KEmpty v-else :title="t('noFilesYet')" :description="t('noFilesHint')" />
   </div>
   </div>
 </template>

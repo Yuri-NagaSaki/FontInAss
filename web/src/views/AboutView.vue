@@ -1,67 +1,108 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
+import { ArrowRight, ArrowUpRight, ChevronDown } from "lucide-vue-next";
+import { communityLinks } from "../lib/community";
 const { t } = useI18n();
+const sections = [
+  { id: "start", key: "guideStart" },
+  { id: "fonts", key: "guideFonts" },
+  { id: "sharing", key: "guideSharing" },
+  { id: "access", key: "guideAccess" },
+  { id: "faq", key: "guideFaq" },
+  { id: "open", key: "guideOpen" },
+];
 </script>
 
 <template>
-  <article class="text-page">
-    <h1>关于 FontInAss</h1>
-    <p>{{ t('aboutDesc') }}</p>
-
-    <h2>{{ t('openSourceTitle') }}</h2>
-    <p>{{ t('openSourceDesc') }}</p>
-    <p>字体库规模约 100 GB，包含 4 套字体集，并持续更新。</p>
-
-    <h2>{{ t('techStackTitle') }}</h2>
-    <p>{{ t('techStackDesc') }}</p>
-    <ul>
-      <li>后端 Bun、Hono、SQLite、opentype.js</li>
-      <li>前端 Vue 3、TypeScript、Tailwind CSS v4、Vite</li>
-      <li>部署 Docker（单镜像，多平台）</li>
-    </ul>
-
-    <h2>{{ t('openSourceRepoTitle') }}</h2>
-    <p>{{ t('openSourceRepoDesc') }}</p>
-    <p>本项目源码托管于 <a href="https://github.com/Yuri-NagaSaki/FontInAss" target="_blank" rel="noopener">Yuri-NagaSaki/FontInAss</a>，采用 AGPL-3.0 许可证。</p>
-
-    <h2>{{ t('communityTitle') }}</h2>
-    <ul>
-      <li><a href="https://github.com/Yuri-NagaSaki/FontInAss" target="_blank" rel="noopener">在 GitHub 上查看源码</a></li>
-      <li><a href="https://t.me/anibtass" target="_blank" rel="noopener">加入 Telegram 群组 @anibtass</a></li>
-      <li><a href="mailto:sa@catcat.blog">发送邮件至 sa@catcat.blog</a></li>
-      <li><a href="https://catcat.blog" target="_blank" rel="noopener">访问博客 catcat.blog</a></li>
-      <li><a href="https://anibt.net/" target="_blank" rel="noopener">访问 AniBT</a></li>
-    </ul>
-  </article>
+  <div class="guide-layout">
+    <nav class="guide-toc" :aria-label="t('community.guideOnPage')">
+      <strong>{{ t("community.guideOnPage") }}</strong
+      ><a
+        v-for="section in sections"
+        :key="section.id"
+        :href="'#' + section.id"
+        >{{ t("community." + section.key) }}</a
+      >
+    </nav>
+    <article class="guide-content">
+      <header class="page-heading">
+        <p class="eyebrow">{{ t("community.brand") }}</p>
+        <h1>{{ t("community.guideTitle") }}</h1>
+        <p>{{ t("community.guideIntro") }}</p>
+      </header>
+      <section id="start">
+        <h2>{{ t("community.guideStart") }}</h2>
+        <p>{{ t("community.guideStartIntro") }}</p>
+        <ol>
+          <li v-for="step in 4" :key="step">
+            {{ t("community.guideStep" + step) }}
+          </li>
+        </ol>
+        <div class="action-row">
+          <RouterLink to="/subset" class="button button-primary"
+            >{{ t("community.start") }}<ArrowRight :size="16" /></RouterLink
+          ><RouterLink to="/cli" class="text-link">{{
+            t("community.cliAction")
+          }}</RouterLink>
+        </div>
+      </section>
+      <section id="fonts">
+        <h2>{{ t("community.guideFonts") }}</h2>
+        <p>{{ t("community.guideFontsBody") }}</p>
+        <RouterLink to="/upload" class="text-link"
+          >{{ t("community.contributeFont") }}<ArrowRight :size="16"
+        /></RouterLink>
+      </section>
+      <section id="sharing">
+        <h2>{{ t("community.guideSharing") }}</h2>
+        <p>{{ t("community.guideSharingBody") }}</p>
+        <RouterLink to="/sharing" class="text-link"
+          >{{ t("community.browse") }}<ArrowRight :size="16"
+        /></RouterLink>
+      </section>
+      <section id="access">
+        <h2>{{ t("community.guideAccess") }}</h2>
+        <p>{{ t("community.guideAccessBody") }}</p>
+        <p>{{ t("community.guideAccessScope") }}</p>
+        <div class="page-note">{{ t("community.guideAccessSecret") }}</div>
+        <div class="action-row">
+          <RouterLink to="/access" class="button"
+            >{{ t("community.groupAction") }}<ArrowRight :size="16"
+          /></RouterLink>
+        </div>
+      </section>
+      <section id="faq">
+        <h2>{{ t("community.guideFaq") }}</h2>
+        <details
+          v-for="key in ['Missing', 'Subset', 'Player', 'Privacy']"
+          :key="key"
+          class="faq-item"
+        >
+          <summary>
+            {{ t("community.faq" + key) }}<ChevronDown :size="16" />
+          </summary>
+          <p>{{ t("community.faq" + key + "Answer") }}</p>
+        </details>
+      </section>
+      <section id="open">
+        <h2>{{ t("community.guideOpen") }}</h2>
+        <p>{{ t("community.guideOpenBody") }}</p>
+        <div class="action-row">
+          <a
+            :href="communityLinks.source"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="button"
+            >{{ t("community.source") }}<ArrowUpRight :size="16" /></a
+          ><a
+            :href="communityLinks.telegram"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="button"
+            >{{ t("community.contact") }}<ArrowUpRight :size="16"
+          /></a>
+        </div>
+      </section>
+    </article>
+  </div>
 </template>
-
-<style scoped>
-.text-page {
-  max-width: 48rem;
-  margin: 0 auto;
-  padding: 0.5rem 0 2rem;
-  color: var(--color-ink-800);
-  font-size: 16.5px;
-  line-height: 1.8;
-}
-.text-page h1 {
-  font-size: 2rem; font-weight: 700;
-  color: var(--color-ink-900);
-  margin: 0 0 1rem; line-height: 1.25;
-  letter-spacing: -0.01em;
-}
-.text-page h2 {
-  font-size: 1.4rem; font-weight: 600;
-  color: var(--color-ink-900);
-  margin: 2rem 0 0.6rem; line-height: 1.3;
-  letter-spacing: -0.005em;
-}
-.text-page p { margin: 0 0 0.75rem; }
-.text-page ul { list-style: disc; padding-left: 1.5rem; margin: 0 0 0.75rem; }
-.text-page li { margin: 0.2rem 0; }
-.text-page a {
-  color: var(--color-sakura-600, oklch(60% 0.18 18));
-  text-decoration: underline; text-underline-offset: 2px;
-}
-.text-page a:hover { color: var(--color-ink-900); }
-</style>

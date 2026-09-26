@@ -273,7 +273,7 @@ onMounted(() => {
       <div class="flex items-end justify-between gap-4 flex-wrap">
         <div class="min-w-0">
           <div class="flex items-baseline gap-2 flex-wrap">
-            <h1 class="font-display font-bold text-2xl md:text-[26px] text-ink-900 leading-tight tracking-tight">
+            <h1 class="font-display font-bold text-[28px] text-ink-900 leading-tight tracking-tight">
               {{ t('sharingTitle') }}
             </h1>
             <span v-if="!loading" class="text-xs text-ink-400 tabular-nums">
@@ -289,6 +289,7 @@ onMounted(() => {
         </KButton>
       </div>
 
+      <p class="text-sm text-ink-500">{{ t('sharingDesc') }}</p>
       <!-- Search -->
       <div class="relative">
         <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-ink-300 pointer-events-none" />
@@ -297,6 +298,7 @@ onMounted(() => {
           @input="onSearchDebounced"
           class="w-full pl-9 pr-9 py-2.5 rounded-xl border border-ink-200 bg-surface text-sm text-ink-900 placeholder:text-ink-300 focus:outline-none focus:border-sakura-300 focus:ring-2 focus:ring-sakura-200/50 transition-colors duration-150"
           :placeholder="t('sharingSearchPlaceholder')"
+          :aria-label="t('sharingSearchPlaceholder')"
         />
         <button v-if="searchQuery" @click="clearSearch" class="absolute right-3 top-1/2 -translate-y-1/2 text-ink-300 hover:text-ink-500 transition-colors">
           <X class="w-4 h-4" />

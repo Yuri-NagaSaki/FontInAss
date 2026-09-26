@@ -152,7 +152,7 @@ onMounted(() => {
     <!-- Header -->
     <div class="card p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-3 sm:justify-between">
       <div class="flex items-start gap-3 min-w-0">
-        <div class="w-10 h-10 rounded-2xl bg-gradient-to-br from-sakura-400 to-sakura-500 text-white flex items-center justify-center shrink-0 shadow-[var(--shadow-sm)]">
+        <div class="w-10 h-10 rounded-2xl bg-sakura-400 text-[var(--accent-ink)] flex items-center justify-center shrink-0 shadow-[var(--shadow-sm)]">
           <Layers class="w-5 h-5" />
         </div>
         <div class="min-w-0">
@@ -208,7 +208,7 @@ onMounted(() => {
           </p>
           <div class="h-1.5 rounded-full bg-ink-100 overflow-hidden">
             <div
-              class="h-full rounded-full bg-gradient-to-r from-mint-300 to-mint-500 transition-[width] duration-500"
+              class="h-full rounded-full bg-sakura-400 transition-[width] duration-500"
               :style="{ width: `${coverage}%` }"
             />
           </div>

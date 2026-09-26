@@ -44,7 +44,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey));
         @click.self="onCancel"
       >
         <!-- Backdrop -->
-        <div class="absolute inset-0 bg-ink-950/40 backdrop-blur-sm" />
+        <div class="absolute inset-0 bg-[var(--scrim)]" />
 
         <!-- Dialog -->
         <Transition name="confirm-pop" appear>

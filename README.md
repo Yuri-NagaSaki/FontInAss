@@ -1,42 +1,49 @@
+# AniBT 字幕工坊
 
-<h1 align="center">FontInAss</h1>
+AniBT 社区的字幕与字体工作区，由 FontInAss 开源引擎提供处理能力。字幕制作者与动画爱好者可以在这里处理字幕、补充共享字体、分享制作成果，并交流使用问题。
 
-<p align="center">
-  <strong>开源字幕字体子集化服务</strong><br>
-  上传 ASS / SSA / SRT 字幕，自动匹配字体并嵌入精简子集，体积减少 95%+
-</p>
+[打开字幕工坊](https://font.anibt.net/) · [使用指南](https://font.anibt.net/about) · [AniBT 社区](https://anibt.net/) · [社区文档](https://wiki.anibt.net/) · [加入社群](https://t.me/anibtass)
 
-<p align="center">
-  <a href="https://font.anibt.net">在线服务</a> ·
-  <a href="https://github.com/Yuri-NagaSaki/FontInAss/releases/tag/v2.0.0">v2.0.0</a> ·
-  <a href="#cli-工具">CLI 工具</a> ·
-  <a href="#docker-部署">Docker 部署</a> ·
-  <a href="https://t.me/anibtass">Telegram 社群</a>
-</p>
+## 在社区中使用
 
----
+| 需要做什么 | 入口 | 使用方式 |
+| --- | --- | --- |
+| 匹配、精简并嵌入字幕字体 | [字幕处理](https://font.anibt.net/subset) | 选择 ASS、SSA、SRT 文件，检查处理结果后下载 |
+| 下载或分享字幕包 | [社区字幕库](https://font.anibt.net/sharing) | 公开浏览与下载；投稿经审核后发布 |
+| 补充缺失字体 | [补充字体](https://font.anibt.net/upload) | 无需凭证；支持 TTF、OTF、TTC、OTC，验证与去重后入库 |
+| 维护字幕组字体 | [字幕组工作区](https://font.anibt.net/access) | 申请权限，保存回执，审核通过后领取凭证 |
+| 反馈缺字或处理问题 | [社区交流](https://font.anibt.net/comments) | 提供操作步骤、字体名称与错误提示 |
+| 接入本地制作流程 | [命令行指南](https://font.anibt.net/cli) | 使用 FontInAss CLI 或 API |
 
-> [!IMPORTANT]
-> FontInAss v2.0.0 是一次不兼容的服务端完全重写。v1 的 `fonts.db`、upload token 和处理日志不会直接迁移；升级前请阅读[从 v1 升级](#从-v1-升级)。Rust CLI 使用的 `/api/subset` 传输协议仍是 v2 正式协议，现有调用方式无需修改。
+工坊与 [AniBT 动画及资源服务](https://anibt.net/)、[社区文档](https://wiki.anibt.net/)和 [Tracker](https://tracker.anibt.net/)使用统一的社区入口与视觉风格。FontInAss 保留为开源引擎和命令行客户端名称，仓库地址、`fontinass` 命令及 API 路径不变。工坊凭证与 AniBT 主站登录分别管理。
 
-## 简介
+## 处理第一份字幕
 
-FontInAss 是一个开源的字幕字体子集化工具。将 ASS/SSA/SRT 字幕文件上传后，系统自动从在线字体库中匹配字幕引用的字体，提取实际使用的字符生成极小的子集化字体，并嵌入到字幕文件中。
+1. 保留原始字幕，进入「字幕处理」。
+2. 选择或拖入 ASS、SSA、SRT 文件。SRT 会转换为 ASS 后处理。
+3. 按需打开「处理设置」，调整严格模式、字体别名、清除内嵌字体和下载时提取字体等选项。
+4. 等待系统从字体库匹配字体，提取字幕实际使用的字形并嵌入结果。
+5. 展开警告检查缺少的字体或字形，再下载字幕并在目标播放器中确认效果。
 
-支持 Web 界面、命令行工具（CLI）和 API 调用三种使用方式。
+子集化减少需要嵌入的字体数据，缩减幅度取决于原字体和字幕用字。文件数、单文件大小及批次大小受服务配置限制。部分播放器对 ASS 内嵌字体的支持有限，可在下载时提取字体用于单独加载或封装。
 
-## 主要功能
+出现缺失字体时，可将有权分享的字体提交到共享库后重试，也可在社区交流区提供字体名称与错误提示。严格模式遇到缺失字体时不输出结果。
 
-- 精准子集化，字体体积减少 95% 以上
-- 在线字体库，收录数万款中日韩及西文字体
-- 批量处理与可控并发
-- 跨平台 CLI 工具，本地批量处理
-- 字幕分享，浏览和下载社区贡献的已处理字幕包
-- Hono RPC + Zod 端到端 JSON 契约
-- SQLite 字体目录与 R2 分享 manifest 灾备
-- Docker 一键部署
+## 参与社区共建
 
-## v2 架构
+- **补充字体**：仅提交有权分享的文件。公开上传受文件数、大小和 IP 请求频率限制，以页面显示为准。
+- **分享字幕**：在字幕库提交 ZIP 或 7z 字幕包，填写番剧、字幕组与语言信息，保留作者署名。管理员审核通过后公开发布。
+- **反馈问题**：说明复现步骤与实际结果。请勿公开密钥、申请回执或私人信息。
+
+处理字幕不会自动将文件发布到字幕库。公开分享需要主动投稿并通过审核。
+
+## 运行与维护
+
+以下内容适用于自托管维护者。线上使用无需自行部署或建立字体索引。
+
+> FontInAss v2 是一次不兼容的服务端重写。v1 的 `fonts.db`、上传凭证和处理日志不会直接迁移；升级前请阅读[从 v1 升级](#从-v1-升级)。Rust CLI 使用的 `/api/subset` 传输协议仍是 v2 正式协议，现有调用方式不变。
+
+### v2 架构
 
 v2 将旧的单体路由实现重写为按能力划分的 Bun workspace：
 
@@ -191,6 +198,15 @@ bun run build
 # 一次执行完整检查
 bun run check
 ```
+
+浏览器回归（对运行中的 Docker 服务执行，只读检查，不提交字体或评论）：
+
+```bash
+bunx --cwd web playwright install chromium
+UI_BASE_URL=http://127.0.0.1:3300 bun run --cwd web test:ui
+```
+
+检查覆盖全部 10 个页面、320–1440px 布局、明暗主题、中英文、移动导航、设置弹窗、SRT 选择器与指南问答。截图和报告默认写入 `/tmp/fontinass-community-ui`，可用 `UI_ARTIFACT_DIR` 修改。
 
 数据脚本：
 

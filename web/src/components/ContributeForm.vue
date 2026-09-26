@@ -225,7 +225,7 @@ function handleClose() {
     <!-- Upload form -->
     <template v-else>
       <!-- Title card -->
-      <div class="card p-6 bg-gradient-to-br from-white to-sakura-50/30">
+      <div class="card p-6 bg-ink-50">
         <div class="flex items-center gap-3 mb-1">
           <div class="w-10 h-10 rounded-xl bg-sakura-100 flex items-center justify-center shrink-0">
             <CloudUpload class="w-5 h-5 text-sakura-500" />
@@ -485,7 +485,7 @@ function handleClose() {
             </div>
             <div class="w-full h-2 rounded-full bg-ink-100 overflow-hidden">
               <div
-                class="h-full rounded-full bg-gradient-to-r from-sakura-400 to-sakura-500 transition-[width] duration-300 ease-out"
+                class="h-full rounded-full bg-sakura-400 transition-[width] duration-300 ease-out"
                 :style="{ width: `${uploadProgress}%` }"
               />
             </div>

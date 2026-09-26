@@ -77,7 +77,7 @@ const switchItems = [
     <!-- Header (sheet variant only) -->
     <div v-if="variant === 'sheet'" class="flex items-center justify-between mb-4">
       <h3 class="font-display font-semibold text-ink-900 text-sm">{{ t('settingsTitle') }}</h3>
-      <button class="w-7 h-7 rounded-lg flex items-center justify-center text-ink-400 hover:bg-sakura-50 hover:text-sakura-600" @click="emit('close')">
+      <button :aria-label="t('community.close')" class="w-7 h-7 rounded-lg flex items-center justify-center text-ink-400 hover:bg-sakura-50 hover:text-sakura-600" @click="emit('close')">
         <X class="w-4 h-4" />
       </button>
     </div>
