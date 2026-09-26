@@ -1,6 +1,6 @@
 # fontinass
 
-The command-line client for [AniBT Subtitle Workshop](https://font.anibt.net/), powered by [FontInAss](https://github.com/Yuri-NagaSaki/FontInAss). Process ASS/SSA/SRT subtitles with the community service or a self-hosted server. The `fontinass` command and API protocol remain unchanged.
+CLI tool for [FontInAss](https://github.com/Yuri-NagaSaki/FontInAss) — embed fonts into ASS/SSA/SRT subtitle files via a FontInAss server.
 
 ## Install
 
@@ -92,8 +92,7 @@ fontinass config show
 ```
 
 Config file location:
-- Linux: `~/.config/fontinass/config.toml` (or under `XDG_CONFIG_HOME`)
-- macOS: `~/Library/Application Support/fontinass/config.toml`
+- Linux/macOS: `~/.config/fontinass/config.toml`
 - Windows: `%APPDATA%\fontinass\config.toml`
 
 ## Exit Codes

@@ -3,28 +3,28 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/cn";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 font-medium rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-sakura-400 disabled:pointer-events-none disabled:opacity-50 select-none whitespace-nowrap",
+  "inline-flex items-center justify-center gap-2 font-medium rounded-xl transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-sakura-400 disabled:pointer-events-none disabled:opacity-50 active:scale-[0.97] select-none whitespace-nowrap",
   {
     variants: {
       variant: {
         primary:
-          "bg-sakura-500 text-[var(--accent-ink)] font-bold hover:brightness-95",
+          "bg-gradient-to-r from-sakura-400 to-sakura-500 text-white shadow-[var(--shadow-sm)] hover:brightness-105 hover:shadow-[var(--shadow-md)]",
         secondary:
-          "bg-ink-50 text-ink-800 hover:bg-ink-100 hover:text-sakura-600",
+          "bg-sakura-50 text-sakura-600 border border-sakura-200 hover:bg-sakura-100 hover:border-sakura-300",
         sky:
-          "bg-ink-50 text-ink-800 hover:bg-ink-100 hover:text-sakura-600",
+          "bg-sky-50 text-sky-500 border border-sky-200 hover:bg-sky-100 hover:border-sky-300",
         ghost:
           "text-ink-600 hover:bg-sakura-50 hover:text-sakura-600",
         danger:
-          "text-rose-600 hover:bg-rose-100",
+          "bg-rose-100 text-rose-600 border border-rose-200 hover:bg-rose-200/60",
         outline:
-          "bg-ink-50 text-ink-700 hover:bg-ink-100 hover:text-sakura-600",
+          "border border-ink-200 text-ink-700 hover:border-sakura-300 hover:bg-sakura-50 hover:text-sakura-600",
       },
       size: {
-        xs: "h-7 px-2.5 text-xs",
+        xs: "h-7 px-2.5 text-xs rounded-lg",
         sm: "h-8 px-3 text-sm",
-        md: "h-[34px] px-4 text-[13px]",
-        lg: "h-10 px-5 text-[13px]",
+        md: "h-9 px-4 text-sm",
+        lg: "h-11 px-6 text-base",
         icon: "h-9 w-9",
         "icon-sm": "h-7 w-7 rounded-lg",
       },

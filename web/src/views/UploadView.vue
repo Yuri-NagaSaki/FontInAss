@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   AlertTriangle, CheckCircle2, CloudUpload, FileText, Gauge, Loader2,
-  Users, X,
+  ShieldCheck, Users, X,
 } from "lucide-vue-next";
 import {
   getPublicFontUploadPolicy,
@@ -143,7 +143,13 @@ onBeforeUnmount(() => clearTimeout(dropErrorTimer));
 
 <template>
   <div class="flex flex-col gap-7">
-    <header class="page-heading"><h1>{{ t('publicUploadTitle') }}</h1><p>{{ t('publicUploadDesc') }}</p></header>
+    <header class="max-w-3xl">
+      <div class="mb-2 flex items-center gap-2 text-xs font-semibold text-sakura-500">
+        <ShieldCheck class="h-3.5 w-3.5" />{{ t('publicUploadEyebrow') }}
+      </div>
+      <h1 class="font-display text-2xl font-bold tracking-tight text-ink-900 sm:text-3xl">{{ t('publicUploadTitle') }}</h1>
+      <p class="mt-2 max-w-2xl text-sm leading-relaxed text-ink-500">{{ t('publicUploadDesc') }}</p>
+    </header>
 
     <div class="flex flex-wrap gap-2 text-xs text-ink-500">
       <span class="rounded-full border border-ink-100 bg-surface px-3 py-1.5">{{ t('publicUploadLimitFiles', { n: policy.max_files }) }}</span>
@@ -152,7 +158,6 @@ onBeforeUnmount(() => clearTimeout(dropErrorTimer));
       <span class="rounded-full border border-ink-100 bg-surface px-3 py-1.5">{{ t('publicUploadLimitRate', { n: policy.requests_per_minute }) }}</span>
     </div>
 
-    <p class="text-sm text-ink-500">{{ t('community.contributionNote') }}</p>
     <section class="min-w-0">
       <div
         class="drop-zone cursor-pointer px-5 py-12 text-center"
@@ -161,11 +166,6 @@ onBeforeUnmount(() => clearTimeout(dropErrorTimer));
         @dragover="onDragOver"
         @dragleave="onDragLeave"
         @drop="onDrop"
-        role="button"
-        tabindex="0"
-        :aria-label="t('publicUploadDropTitle')"
-        @keydown.enter.prevent="chooseFiles"
-        @keydown.space.prevent="chooseFiles"
         @click="chooseFiles"
       >
         <div class="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-sakura-50 text-sakura-500"><CloudUpload class="h-6 w-6" /></div>

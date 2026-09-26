@@ -80,7 +80,6 @@ const handleFontChanged = () => {
 
 <template>
   <div>
-    <header class="page-heading"><h1>{{ t('fontManagement') }}</h1><p>{{ t('fontManagementDesc') }}</p></header>
     <div v-if="accessLoading" class="flex min-h-[55vh] items-center justify-center text-sakura-400">
       <span class="h-5 w-5 animate-spin rounded-full border-2 border-sakura-100 border-t-sakura-400" />
     </div>

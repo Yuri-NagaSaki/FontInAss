@@ -148,7 +148,13 @@ onMounted(() => { if (storedApplication.value) void refreshApplication(); });
 
 <template>
   <div class="flex flex-col gap-7">
-    <header class="page-heading"><h1>{{ t('memberAccessTitle') }}</h1><p>{{ t('memberAccessDesc') }}</p></header>
+    <header class="max-w-3xl">
+      <div class="mb-2 flex items-center gap-2 text-xs font-semibold text-sakura-500">
+        <ShieldCheck class="h-3.5 w-3.5" />{{ t('memberAccessEyebrow') }}
+      </div>
+      <h1 class="font-display text-2xl font-bold tracking-tight text-ink-900 sm:text-3xl">{{ t('memberAccessTitle') }}</h1>
+      <p class="mt-2 max-w-2xl text-sm leading-relaxed text-ink-500">{{ t('memberAccessDesc') }}</p>
+    </header>
 
     <div v-if="storedApplication" class="rounded-2xl border border-ink-100 bg-surface px-4 py-4 sm:px-5">
       <div class="flex flex-col gap-4 sm:flex-row sm:items-center">

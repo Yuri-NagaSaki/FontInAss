@@ -1,9 +1,8 @@
 import { createApp } from "vue";
 import { createI18n } from "vue-i18n";
 import { createRouter, createWebHistory } from "vue-router";
-import "@fontsource/zen-maru-gothic/latin-500.css";
-import "@fontsource/zen-maru-gothic/latin-700.css";
-import "@fontsource/m-plus-1-code/latin-500.css";
+import "@fontsource-variable/outfit";
+import "@fontsource-variable/plus-jakarta-sans";
 import "./style.css";
 import App from "./App.vue";
 import zhCN from "./locales/zh-CN";
@@ -20,11 +19,6 @@ const i18n = createI18n({
 
 const router = createRouter({
   history: createWebHistory(),
-  scrollBehavior(to, _from, saved) {
-    if (saved) return saved;
-    if (to.hash) return { el: to.hash, top: 120 };
-    return { top: 0 };
-  },
   routes: [
     { path: "/", component: () => import("./views/HomeView.vue") },
     { path: "/subset", component: () => import("./views/SubsetView.vue") },
@@ -36,7 +30,6 @@ const router = createRouter({
     { path: "/about", component: () => import("./views/AboutView.vue") },
     { path: "/comments", component: () => import("./views/CommentsView.vue") },
     { path: "/logs", component: () => import("./views/LogsView.vue") },
-    { path: "/:pathMatch(.*)*", component: () => import("./views/NotFoundView.vue") },
   ],
 });
 
