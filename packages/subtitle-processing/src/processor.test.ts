@@ -67,8 +67,8 @@ describe("DefaultSubtitleProcessor", () => {
       const restoredText = new TextDecoder().decode(restored.data!);
       expect(removeSection(restoredText, "Fonts").trim()).toBe(new TextDecoder().decode(original).trim());
       expect(restoredText).not.toContain("; Font Subset:");
-      expect(restoredText).toContain("fontname:Fixture_0.otf\n");
-      const fontBlock = restoredText.split("fontname:Fixture_0.otf\n")[1].split("[Events]")[0];
+      expect(restoredText).toContain("fontname:Fixture_0_400_0.otf\n");
+      const fontBlock = restoredText.split("fontname:Fixture_0_400_0.otf\n")[1].split("[Events]")[0];
       const embedded = opentype.parse(uudecode(fontBlock.trim()).buffer as ArrayBuffer);
       expect(embedded.getEnglishName("fontFamily")).toBe("Fixture");
 
@@ -97,6 +97,15 @@ describe("DefaultSubtitleProcessor", () => {
     expect(loads).toBe(1);
   });
 
+  test("coalesces simultaneous identical work", async () => {
+    let loads = 0;
+    const processor = new DefaultSubtitleProcessor(source(() => { loads++; }), silent);
+    const input = { filename: "a.ass", bytes: assBytes() };
+    const results = await Promise.all([processor.process(input), processor.process(input)]);
+    expect(loads).toBe(1);
+    expect(results.every(result => result.code === CODE.OK)).toBe(true);
+  });
+
   test("evicts cached results that exceed the byte budget", async () => {
     let loads = 0;
     const processor = new DefaultSubtitleProcessor(source(() => { loads++; }), silent, { cacheEntries: 8, cacheBytes: 1 });
@@ -104,5 +113,33 @@ describe("DefaultSubtitleProcessor", () => {
     await processor.process({ filename: "a.ass", bytes });
     await processor.process({ filename: "a.ass", bytes });
     expect(loads).toBe(2);
+  });
+
+  test("strict mode rejects missing punctuation instead of silently returning success", async () => {
+    const processor = new DefaultSubtitleProcessor(source(() => {}), silent, { cacheEntries: 0 });
+    const bytes = assBytes("Fixture", "A—€");
+    const strict = await processor.process({ filename: "a.ass", bytes, options: { fontsCheck: true } });
+    expect(strict.code).toBe(CODE.MISSING_FONT);
+    expect(strict.data).toBeNull();
+    expect(strict.messages.join(" ")).toContain("—€");
+  });
+
+  test("font catalog changes invalidate successful cached results", async () => {
+    let loads = 0;
+    const fonts = { ...source(() => { loads++; }), revision: 0 };
+    const processor = new DefaultSubtitleProcessor(fonts, silent);
+    const bytes = assBytes();
+    await processor.process({ filename: "a.ass", bytes });
+    fonts.revision++;
+    await processor.process({ filename: "a.ass", bytes });
+    expect(loads).toBe(2);
+  });
+
+  test("different character sets receive distinct aliases for safe multi-track use", async () => {
+    const processor = new DefaultSubtitleProcessor(source(() => {}), silent);
+    const first = await processor.process({ filename: "a.ass", bytes: assBytes() });
+    const second = await processor.process({ filename: "b.ass", bytes: assBytes("Fixture", "AB") });
+    const aliases = [first, second].map(result => Object.keys(analyseAss(removeSection(new TextDecoder().decode(result.data!), "Fonts")).subRename)[0]);
+    expect(aliases[0]).not.toBe(aliases[1]);
   });
 });

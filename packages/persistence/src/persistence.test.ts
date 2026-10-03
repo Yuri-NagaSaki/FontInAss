@@ -38,7 +38,7 @@ describe("SqliteDatabase migrations", () => {
     expect(token?.request_count).toBe(7);
     expect(token?.accepted_file_count).toBe(1);
     expect(token?.accepted_bytes).toBe(123);
-    expect(migrated.raw.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(2);
+    expect(migrated.raw.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(3);
     expect(migrated.raw.query<{ name: string }, [string]>("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get("api_token_applications")?.name).toBe("api_token_applications");
     expect(migrated.raw.query<{ name: string }, [string]>("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get("public_font_upload_rate_limits")?.name).toBe("public_font_upload_rate_limits");
 
@@ -52,6 +52,20 @@ describe("SqliteDatabase migrations", () => {
 });
 
 describe("SqliteFontCatalogRepository", () => {
+  test("normalizes Unicode aliases and uses an indexed lookup", () => {
+    const directory = mkdtempSync(join(tmpdir(), "fontinass-lookup-"));
+    directories.push(directory);
+    const database = new SqliteDatabase(join(directory, "fonts.db"));
+    const fonts = new SqliteFontCatalogRepository(database);
+    fonts.insertFile({ id: "unicode", filename: "unicode.ttf", key: "unicode.ttf", size: 20, sha256: "hash" }, [
+      { index: 0, familyNames: ["Ｆｏｏ\u3000Ｂａｒ", "Foo-Bar"], weight: 400, bold: false, italic: false },
+    ]);
+    expect(fonts.lookupByLooseNames(["foobar"]).length).toBe(2);
+    const plan = database.raw.query<{ detail: string }, []>("EXPLAIN QUERY PLAN SELECT * FROM font_names WHERE name_normalized='foobar'").all();
+    expect(plan.map(row => row.detail).join(" ")).toContain("USING INDEX idx_font_names_normalized");
+    database.close();
+  });
+
   test("counts font files without loading every row", () => {
     const directory = mkdtempSync(join(tmpdir(), "fontinass-count-"));
     directories.push(directory);

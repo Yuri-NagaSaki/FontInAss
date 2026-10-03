@@ -199,14 +199,38 @@ pub async fn subset_batch(
         .await
         .context("Failed to parse batch response")?;
 
-    Ok(batch
+    if batch.results.len() != file_paths.len() {
+        bail!(
+            "Server returned {} results for {} files",
+            batch.results.len(),
+            file_paths.len()
+        );
+    }
+    batch
         .results
         .into_iter()
-        .map(|item| SubsetResult {
-            filename: item.filename,
-            code: item.code,
-            messages: item.messages.unwrap_or_default(),
-            data: item.data.and_then(|s| B64.decode(s).ok()),
+        .zip(file_paths)
+        .map(|(item, path)| {
+            let expected = path.file_name().context("No filename")?.to_string_lossy();
+            if item.filename != expected {
+                bail!("Server response order does not match requested files");
+            }
+            let data = item
+                .data
+                .map(|value| {
+                    B64.decode(value)
+                        .context("Invalid base64 in server response")
+                })
+                .transpose()?;
+            if item.code <= 201 && data.as_ref().is_none_or(|bytes| bytes.is_empty()) {
+                bail!("Server returned no subtitle data for {}", item.filename);
+            }
+            Ok(SubsetResult {
+                filename: item.filename,
+                code: item.code,
+                messages: item.messages.unwrap_or_default(),
+                data,
+            })
         })
-        .collect())
+        .collect()
 }

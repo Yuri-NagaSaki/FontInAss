@@ -1,0 +1,98 @@
+{
+  "timestamp": "2026-10-03T15:55:14.951Z",
+  "base": "http://127.0.0.1:3302",
+  "cases": [
+    {
+      "name": "latin",
+      "font": "Arial",
+      "text": "AV office café — € fi ffi",
+      "runs": [
+        {
+          "ms": 167.94,
+          "status": 200,
+          "code": "200",
+          "bytes": 51256,
+          "messages": []
+        },
+        {
+          "ms": 2.11,
+          "status": 200,
+          "code": "200",
+          "bytes": 51256,
+          "messages": []
+        }
+      ]
+    },
+    {
+      "name": "cjk",
+      "font": "Microsoft YaHei",
+      "text": "字幕字体子集化测试：你好，世界！日本語。한국어。",
+      "runs": [
+        {
+          "ms": 215,
+          "status": 200,
+          "code": "201",
+          "bytes": 27451,
+          "messages": [
+            "Missing glyphs in [Microsoft YaHei]: 한국어"
+          ]
+        },
+        {
+          "ms": 208.27,
+          "status": 200,
+          "code": "201",
+          "bytes": 27451,
+          "messages": [
+            "Missing glyphs in [Microsoft YaHei]: 한국어"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "vertical",
+      "font": "@思源黑体",
+      "text": "「竖排」：中文、日本語。（测试）",
+      "runs": [
+        {
+          "ms": 220.89,
+          "status": 200,
+          "code": "200",
+          "bytes": 16884,
+          "messages": []
+        },
+        {
+          "ms": 1.32,
+          "status": 200,
+          "code": "200",
+          "bytes": 16884,
+          "messages": []
+        }
+      ]
+    },
+    {
+      "name": "arabic",
+      "font": "DejaVu Sans",
+      "text": "العربية السَّلَامُ عَلَيْكُمْ",
+      "runs": [
+        {
+          "ms": 111.3,
+          "status": 200,
+          "code": "200",
+          "bytes": 34154,
+          "messages": []
+        },
+        {
+          "ms": 1.35,
+          "status": 200,
+          "code": "200",
+          "bytes": 34154,
+          "messages": []
+        }
+      ]
+    }
+  ],
+  "health": {
+    "count": 36,
+    "maxMs": 7.27
+  }
+}

@@ -15,10 +15,16 @@ RUN bun run --cwd server build
 FROM oven/bun:1.4.0 AS runtime
 
 RUN apt-get update -qq \
-  && apt-get install -y --no-install-recommends p7zip-full \
+  && apt-get install -y --no-install-recommends p7zip-full libharfbuzz-bin python3 python3-venv \
+  && python3 -m venv /opt/fonttools \
+  && /opt/fonttools/bin/pip install --no-cache-dir --no-deps fonttools==4.62.1 \
   && rm -rf /var/lib/apt/lists/*
 
+ENV PATH="/opt/fonttools/bin:$PATH"
+
 WORKDIR /app/server
+ARG BUILD_REVISION=unknown
+LABEL org.opencontainers.image.revision=$BUILD_REVISION
 COPY --from=builder /build/server/dist ./dist
 COPY --from=builder /build/web/dist /app/web/dist
 RUN mkdir -p /app/fonts /app/data
@@ -29,12 +35,12 @@ ENV PORT=3000 \
     PENDING_DIR=/app/data/pending-v2 \
     LOG_DIR=/app/data/logs \
     CORS_ORIGIN=* \
-    SUBSET_CONCURRENCY=5 \
+    SUBSET_CONCURRENCY=2 \
     CACHE_MAX_ENTRIES=100 \
     CACHE_MAX_BYTES=67108864 \
     SUBSET_MAX_FILES=20 \
-    SUBSET_MAX_FILE_SIZE=67108864 \
-    SUBSET_MAX_BATCH_SIZE=268435456 \
+    SUBSET_MAX_FILE_SIZE=8388608 \
+    SUBSET_MAX_BATCH_SIZE=33554432 \
     PUBLIC_UPLOAD_MAX_FILES=20 \
     PUBLIC_UPLOAD_MAX_FILE_SIZE=104857600 \
     PUBLIC_UPLOAD_MAX_BATCH_SIZE=104857600 \

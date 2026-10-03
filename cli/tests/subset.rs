@@ -138,3 +138,97 @@ fn rejects_unknown_font_name_modes() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("invalid value"));
 }
+
+#[test]
+fn rejects_output_collisions_before_contacting_server() {
+    let directory = TestDirectory::new();
+    let first = directory.0.join("first");
+    let second = directory.0.join("second");
+    std::fs::create_dir_all(&first).unwrap();
+    std::fs::create_dir_all(&second).unwrap();
+    std::fs::write(first.join("same.ass"), "first").unwrap();
+    std::fs::write(second.join("same.ass"), "second").unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_fontinass"))
+        .args(["subset", "--server", "http://127.0.0.1:1", "--output"])
+        .arg(directory.0.join("output"))
+        .arg(first.join("same.ass"))
+        .arg(second.join("same.ass"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Output path collision"));
+    assert_eq!(
+        std::fs::read_to_string(first.join("same.ass")).unwrap(),
+        "first"
+    );
+}
+
+#[tokio::test]
+async fn processes_a_single_file_remainder_as_binary() {
+    let directory = TestDirectory::new();
+    let files: Vec<_> = (0..11)
+        .map(|i| directory.0.join(format!("{i:02}.ass")))
+        .collect();
+    for file in &files {
+        std::fs::write(file, "original").unwrap();
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        for count in [10, 1] {
+            let (socket, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(socket);
+            let mut headers = String::new();
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).await.unwrap() > 0);
+                headers.push_str(&line);
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            let size: usize = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse().unwrap())
+                })
+                .unwrap();
+            reader.read_exact(&mut vec![0; size]).await.unwrap();
+            let body = if count == 1 {
+                assert!(headers.to_lowercase().contains("application/octet-stream"));
+                "processed".to_string()
+            } else {
+                serde_json::json!({"results": (0..10).map(|i| serde_json::json!({"filename":format!("{i:02}.ass"),"code":200,"data":"cHJvY2Vzc2Vk"})).collect::<Vec<_>>()}).to_string()
+            };
+            reader.get_mut().write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nX-Code: 200\r\nConnection: close\r\n\r\n{}",body.len(),body).as_bytes()).await.unwrap();
+        }
+    });
+    let output = timeout(
+        Duration::from_secs(10),
+        Command::new(env!("CARGO_BIN_EXE_fontinass"))
+            .args([
+                "subset",
+                "--server",
+                &format!("http://{address}"),
+                "--api-key",
+                "",
+            ])
+            .args(&files)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    server.await.unwrap();
+    for file in files {
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "processed");
+    }
+}

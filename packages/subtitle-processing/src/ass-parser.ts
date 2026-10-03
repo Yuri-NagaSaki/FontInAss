@@ -1,362 +1,8 @@
-/**
- * ASS/SSA subtitle analyzer.
- *
- * Parses [V4+ Styles] and [Events] sections and returns a map of
- * (fontName, weight, italic) → Set<codepoint>.
- *
- * This is a TypeScript port of the C++/Cython analyseAss implementation
- * from the fontInAss project, which itself implements the ASS spec at:
- * https://github.com/weizhenye/ASS/wiki
- */
+export { analyseAss, parseFontKey, type AnalyseResult, type FontCharMap } from "./ass-analysis.js";
+import { normalizeFontName } from "./ass-analysis.js";
 
-export interface FontCharMap {
-  /** key is encoded as "fontNameLower|weight|italic(0/1)" */
-  [key: string]: Set<number>;
-}
-
-export interface AnalyseResult {
-  fontCharMap: FontCharMap;
-  /** Maps internal renamed fonts back to original names (subset prefix stripping) */
-  subRename: Record<string, string>;
-  /** Maps lowercased font name → original cased name (first occurrence wins) */
-  originalNames: Record<string, string>;
-}
-
-function normalizeFontName(name: string): string {
-  let normalized = name.trim();
-  if (normalized.startsWith("@")) normalized = normalized.slice(1).trim();
-  return normalized;
-}
-
-function makeFontKey(name: string, weight: number, italic: boolean): string {
-  return `${normalizeFontName(name).toLowerCase()}|${weight}|${italic ? 1 : 0}`;
-}
-
-function getOrCreate(map: FontCharMap, key: string): Set<number> {
-  if (!map[key]) map[key] = new Set();
-  return map[key];
-}
-
-/**
- * Parse ASS override tags block `{...}` and update current font state.
- * Returns the new [fontName, weight, italic] state.
- */
-function processTagBlock(
-  tagContent: string, // content between { and }, without braces
-  defaultFontName: string,
-  defaultWeight: number,
-  defaultItalic: boolean,
-  currentFontName: string,
-  currentWeight: number,
-  currentItalic: boolean,
-  styleFontName: Record<string, string>,
-  styleWeight: Record<string, number>,
-  styleItalic: Record<string, boolean>,
-): [string, number, boolean] {
-  let fontName = currentFontName;
-  let weight = currentWeight;
-  let italic = currentItalic;
-
-  // Extract each \tag from the block
-  // Tags are separated by \, and may contain parenthesized args e.g. \t(...)
-  let i = 0;
-  while (i < tagContent.length) {
-    if (tagContent[i] !== "\\") {
-      i++;
-      continue;
-    }
-    i++; // skip backslash
-
-    // Find end of tag name (next \ or end)
-    let j = i;
-    while (j < tagContent.length && tagContent[j] !== "\\") j++;
-    const tagFull = tagContent.slice(i, j);
-    i = j;
-
-    if (!tagFull) continue;
-
-    // \fn — font name change
-    if (tagFull.startsWith("fn")) {
-      const name = normalizeFontName(tagFull.slice(2));
-      fontName = name || defaultFontName;
-      continue;
-    }
-
-    // \r — reset style
-    if (tagFull.startsWith("r")) {
-      // skip \rndx, \rndy, \rndz (random movement tags)
-      if (tagFull.match(/^rnd[xyz]\d+$/) || tagFull.match(/^rnd\d+$/)) {
-        continue;
-      }
-      let styleName = tagFull.slice(1).replace(/^\(|\)$/g, "").replace(/\*$/, "");
-      if (styleName === "") {
-        fontName = defaultFontName;
-        weight = defaultWeight;
-        italic = defaultItalic;
-      } else if (styleName in styleFontName) {
-        fontName = styleFontName[styleName];
-        weight = styleWeight[styleName];
-        italic = styleItalic[styleName];
-      } else {
-        // Unknown style — reset to default (ASS spec behaviour)
-        fontName = defaultFontName;
-        weight = defaultWeight;
-        italic = defaultItalic;
-      }
-      continue;
-    }
-
-    // \b — bold / weight
-    if (tagFull.startsWith("b") && !tagFull.match(/^b[a-zA-Z]/)) {
-      const val = tagFull.slice(1).replace(/^\(|\)$/g, "");
-      if (val === "" || val === "0") {
-        weight = 400;
-      } else if (val === "1") {
-        weight = 700;
-      } else {
-        const n = parseInt(val, 10);
-        if (!isNaN(n)) weight = n;
-      }
-      continue;
-    }
-
-    // \i — italic
-    if (tagFull.startsWith("i") && !tagFull.match(/^i[a-zA-Z]/)) {
-      const val = tagFull.slice(1).replace(/^\(|\)$/g, "");
-      if (val === "1") italic = true;
-      else if (val === "0") italic = false;
-      // empty = no change per spec
-      continue;
-    }
-
-    // all other tags are irrelevant for font tracking
-  }
-
-  return [fontName, weight, italic];
-}
-
-/**
- * Parse a single Dialogue event text into codepoints, updating fontCharMap.
- */
-function parseDialogueText(
-  text: string,
-  defaultFontName: string,
-  defaultWeight: number,
-  defaultItalic: boolean,
-  styleFontName: Record<string, string>,
-  styleWeight: Record<string, number>,
-  styleItalic: Record<string, boolean>,
-  fontCharMap: FontCharMap,
-  originalNames: Record<string, string>,
-): void {
-  let curFont = defaultFontName;
-  let curWeight = defaultWeight;
-  let curItalic = defaultItalic;
-
-  const recordName = (name: string) => {
-    const normalized = normalizeFontName(name);
-    if (!normalized) return;
-    const lower = normalized.toLowerCase();
-    if (!(lower in originalNames)) originalNames[lower] = normalized;
-  };
-  recordName(defaultFontName);
-
-  let i = 0;
-  const len = text.length;
-
-  while (i < len) {
-    const ch = text[i];
-
-    if (ch === "{") {
-      // Collect tag block
-      const end = text.indexOf("}", i + 1);
-      if (end === -1) {
-        // Unclosed brace — treat rest as text
-        const cp = text.codePointAt(i);
-        if (cp !== undefined) {
-          getOrCreate(fontCharMap, makeFontKey(curFont, curWeight, curItalic)).add(cp);
-        }
-        i++;
-        continue;
-      }
-      const tagBlock = text.slice(i + 1, end);
-      [curFont, curWeight, curItalic] = processTagBlock(
-        tagBlock,
-        defaultFontName, defaultWeight, defaultItalic,
-        curFont, curWeight, curItalic,
-        styleFontName, styleWeight, styleItalic,
-      );
-      recordName(curFont);
-      i = end + 1;
-      continue;
-    }
-
-    if (ch === "\\") {
-      // Escape sequences
-      i++;
-      if (i >= len) break;
-      const next = text[i];
-      if (next === "n" || next === "N" || next === "h") {
-        // soft/hard line break — no visible char
-        i++;
-        continue;
-      }
-      if (next === "{" || next === "}") {
-        // escaped brace — add as literal character
-        getOrCreate(fontCharMap, makeFontKey(curFont, curWeight, curItalic)).add(next.codePointAt(0)!);
-        i++;
-        continue;
-      }
-      // plain backslash + char — add both
-      getOrCreate(fontCharMap, makeFontKey(curFont, curWeight, curItalic)).add(92); // '\'
-      const cp = text.codePointAt(i);
-      if (cp !== undefined) {
-        getOrCreate(fontCharMap, makeFontKey(curFont, curWeight, curItalic)).add(cp);
-        i += cp > 0xFFFF ? 2 : 1;
-      }
-      continue;
-    }
-
-    // Regular character
-    const cp = text.codePointAt(i);
-    if (cp !== undefined) {
-      getOrCreate(fontCharMap, makeFontKey(curFont, curWeight, curItalic)).add(cp);
-      i += cp > 0xFFFF ? 2 : 1;
-    } else {
-      i++;
-    }
-  }
-}
-
-/**
- * Analyse an ASS subtitle string and return per-font codepoint sets.
- *
- * @param assText - UTF-8 decoded ASS file content
- */
-export function analyseAss(assText: string): AnalyseResult {
-  const lines = assText.split(/\r?\n/);
-
-  // Style maps
-  const styleFontName: Record<string, string> = {};
-  const styleWeight: Record<string, number> = {};
-  const styleItalic: Record<string, boolean> = {};
-  const fontCharMap: FontCharMap = {};
-  const subRename: Record<string, string> = {};
-  const originalNames: Record<string, string> = {};
-
-  let firstStyleName: string | null = null;
-
-  // Format column indices
-  let styleNameIdx = -1, fontNameIdx = -1, boldIdx = -1, italicIdx = -1;
-  let eventStyleIdx = -1, eventTextIdx = -1;
-
-  type State = "init" | "styles_format" | "styles" | "events_format" | "events";
-  let state: State = "init";
-
-  for (const rawLine of lines) {
-    const line = rawLine.trimEnd();
-    if (!line) continue;
-
-    if (state === "init") {
-      // Parse "; Font Subset: XXXXXXXX - OriginalFontName" comments
-      if (line.startsWith("; Font Subset:")) {
-        // Format: "; Font Subset: 59W6OVGX - DFHanziPenW5-A"
-        const afterPrefix = line.slice("; Font Subset: ".length);
-        const renamedTo = afterPrefix.slice(0, 8);
-        const dashIdx = afterPrefix.indexOf(" - ");
-        if (dashIdx >= 0 && renamedTo.length === 8) {
-          const originalName = afterPrefix.slice(dashIdx + 3).trim();
-          if (originalName) subRename[renamedTo] = originalName;
-        }
-      }
-      if (line === "[V4+ Styles]") {
-        state = "styles_format";
-      }
-      continue;
-    }
-
-    if (state === "styles_format") {
-      if (!line.startsWith("Format:")) continue;
-      const cols = line.slice(7).replace(/ /g, "").split(",");
-      styleNameIdx = cols.indexOf("Name");
-      fontNameIdx = cols.indexOf("Fontname");
-      boldIdx = cols.indexOf("Bold");
-      italicIdx = cols.indexOf("Italic");
-      if (styleNameIdx === -1 || fontNameIdx === -1) {
-        // Malformed — skip
-        continue;
-      }
-      state = "styles";
-      continue;
-    }
-
-    if (state === "styles") {
-      if (line.startsWith("[Events]")) {
-        state = "events_format";
-        continue;
-      }
-      if (line.startsWith("[")) {
-        state = "init";
-        continue;
-      }
-      if (!line.startsWith("Style:")) continue;
-      const parts = line.slice(6).trim().split(",");
-      const styleName = parts[styleNameIdx]?.trim().replace(/\*$/, "") ?? "";
-      const fontName = normalizeFontName(parts[fontNameIdx] ?? "");
-      const weight = boldIdx >= 0 && parts[boldIdx]?.trim() === "1" ? 700 : 400;
-      const italic = italicIdx >= 0 && parts[italicIdx]?.trim() === "1";
-      styleFontName[styleName] = fontName;
-      styleWeight[styleName] = weight;
-      styleItalic[styleName] = italic;
-      if (firstStyleName === null) firstStyleName = styleName;
-      continue;
-    }
-
-    if (state === "events_format") {
-      if (!line.startsWith("Format:")) continue;
-      const cols = line.slice(7).replace(/ /g, "").split(",");
-      eventStyleIdx = cols.indexOf("Style");
-      eventTextIdx = cols.indexOf("Text");
-      if (eventStyleIdx === -1 || eventTextIdx === -1) continue;
-      state = "events";
-      continue;
-    }
-
-    if (state === "events") {
-      if (line.startsWith("[")) break; // next section
-      if (!line.startsWith("Dialogue:")) continue;
-
-      // Split only enough to extract Style and Text
-      const withoutPrefix = line.slice(9); // skip "Dialogue:"
-      const parts = withoutPrefix.split(",");
-      if (parts.length <= eventTextIdx) continue;
-
-      let styleName = parts[eventStyleIdx]?.replace(/\*$/, "").trim() ?? "";
-      if (!(styleName in styleFontName)) {
-        styleName = firstStyleName ?? "";
-      }
-
-      const defaultFont = styleFontName[styleName] ?? "";
-      const defaultWeight = styleWeight[styleName] ?? 400;
-      const defaultItalic = styleItalic[styleName] ?? false;
-
-      // Text is everything from eventTextIdx onward (may contain commas)
-      const text = parts.slice(eventTextIdx).join(",");
-
-      if (defaultFont) {
-        parseDialogueText(
-          text,
-          defaultFont, defaultWeight, defaultItalic,
-          styleFontName, styleWeight, styleItalic,
-          fontCharMap,
-          originalNames,
-        );
-      }
-    }
-  }
-
-  return { fontCharMap, subRename, originalNames };
-}
+export const DEFAULT_SRT_FORMAT = "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding";
+export const DEFAULT_SRT_STYLE = "Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,0,2,10,10,10,1";
 
 /**
  * Decode the encoding of an ASS subtitle byte buffer.
@@ -425,10 +71,12 @@ export function srtToAss(srtText: string, format: string, style: string): string
     const start = `${h1}:${m1}:${s1}.${ms1.slice(0, 2)}`;
     const end = `${h2}:${m2}:${s2}.${ms2.slice(0, 2)}`;
     const textIdx = blines.indexOf(timeLine) + 1;
-    const text = blines.slice(textIdx).join("\\N")
+    const text = blines.slice(textIdx).map(line => line.replace(/[{}]/g, "\\$&")).join("\\N")
       .replace(/<b>/gi, "{\\b1}").replace(/<\/b>/gi, "{\\b0}")
       .replace(/<i>/gi, "{\\i1}").replace(/<\/i>/gi, "{\\i0}")
-      .replace(/<[^>]+>/g, "");
+      .replace(/<u>/gi, "{\\u1}").replace(/<\/u>/gi, "{\\u0}")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&(amp|lt|gt|quot|apos|nbsp);/gi, (_, entity: string) => ({ amp: "&", lt: "<", gt: ">", quot: '\"', apos: "'", nbsp: "\u00a0" })[entity.toLowerCase()] ?? "");
     lines.push(`Dialogue: 0,${start},${end},Default,,0,0,0,,${text}`);
   }
 
@@ -438,21 +86,15 @@ export function srtToAss(srtText: string, format: string, style: string): string
 /** Remove a section (e.g. [Fonts]) from ASS text.
  *  Handles encoded font data containing '[' characters within lines. */
 export function removeSection(assText: string, sectionName: string): string {
-  const header = `[${sectionName}]`;
-  const startIdx = assText.indexOf(header);
-  if (startIdx === -1) return assText;
-
-  // Find the next real section header: a line matching [Name] exactly.
-  // UUencoded data may contain '[' mid-line, so we must check line boundaries.
-  const sectionHeaderRe = /^\[[^\[\]\r\n]+\]\s*$/gm;
-  sectionHeaderRe.lastIndex = startIdx + header.length;
-  const match = sectionHeaderRe.exec(assText);
-
-  if (match) {
-    return assText.slice(0, startIdx) + assText.slice(match.index);
-  }
-  // No next section — remove everything from this section to end
-  return assText.slice(0, startIdx);
+  const lines = assText.split(/(\r?\n)/);
+  let removing = false;
+  return lines.filter((line, index) => {
+    if (index % 2 === 0) {
+      const header = line.trim().match(/^\[([^\]]+)\]$/);
+      if (header) removing = header[1].toLowerCase() === sectionName.toLowerCase();
+    }
+    return !removing;
+  }).join("");
 }
 
 /** Remove previous subset rename comments before writing fresh aliases. */
@@ -509,7 +151,13 @@ export function renameAssFonts(
       textStart = comma + 1;
     }
     const text = match[2].slice(textStart).replace(/\{[^}]*\}/g, (block) =>
-      block.replace(/(\\fn)([^\\}]*)/gi, (_tag, prefix: string, name: string) => `${prefix}${renameFontName(name)}`),
+      block.replace(/(\\fn)([^\\}]*)/gi, (_tag, prefix: string, name: string) => {
+        const renamed = renameFontName(name);
+        if (renamed !== name) return `${prefix}${renamed}`;
+        // Closing transform parentheses belong to the tag container, not the name.
+        const closing = name.match(/\)+[ \t]*$/)?.[0] ?? "";
+        return `${prefix}${renameFontName(name.slice(0, name.length - closing.length))}${closing}`;
+      }),
     );
     return `${match[1]}${match[2].slice(0, textStart)}${text}`;
   };
@@ -519,9 +167,9 @@ export function renameAssFonts(
     const trimmed = line.trim();
 
     if (/^\[[^\]]+\]$/.test(trimmed)) {
-      section = /^\[V4\+ Styles\]$/i.test(trimmed) ? "styles" : /^\[Events\]$/i.test(trimmed) ? "events" : null;
-      fontNameIdx = -1;
-      eventTextIdx = -1;
+      section = /^\[V4\+? Styles\]$/i.test(trimmed) ? "styles" : /^\[Events\]$/i.test(trimmed) ? "events" : null;
+      fontNameIdx = section === "styles" ? 1 : -1;
+      eventTextIdx = section === "events" ? 9 : -1;
       continue;
     }
     if (!section) continue;
@@ -550,7 +198,7 @@ export function insertFontSubsetComments(
     .map(([alias, original]) => `; Font Subset: ${alias} - ${original}`)
     .join(assText.includes("\r\n") ? "\r\n" : "\n");
   const newline = assText.includes("\r\n") ? "\r\n" : "\n";
-  const marker = assText.search(/^\[V4\+ Styles\]\s*$/m);
+  const marker = assText.search(/^[ \t]*\[V4\+? Styles\][ \t]*$/im);
 
   if (marker >= 0) {
     const before = assText.slice(0, marker).replace(/[ \t]*(?:\r?\n)*$/, newline);
@@ -562,8 +210,13 @@ export function insertFontSubsetComments(
 
 /** Check if ASS text has a [Fonts] section with content */
 export function checkFontsSection(assText: string): 0 | 1 | 2 {
-  const match = assText.match(/\[Fonts\]([\s\S]*?)(?=\[|$)/);
-  if (!match) return 0;
-  const content = match[1].trim();
-  return content.length > 0 ? 2 : 1;
+  let found = false;
+  for (const line of assText.split(/\r?\n/)) {
+    const header = line.trim().match(/^\[([^\]]+)\]$/);
+    if (header) {
+      if (header[1].toLowerCase() === "fonts") found = true;
+      else if (found) return 1;
+    } else if (found && line.trim()) return 2;
+  }
+  return found ? 1 : 0;
 }

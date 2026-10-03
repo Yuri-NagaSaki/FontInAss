@@ -177,7 +177,7 @@ export default {
   emptyFolder: "Empty folder",
   // Subset view
   dropZoneTitle: "Drop subtitle files here",
-  dropZoneHint: "Supports .ass / .ssa — batch processing supported",
+  dropZoneHint: "Supports .ass / .ssa / .srt — batch processing supported",
   chooseFiles: "Choose Files",
   dropHere: "Drop to upload",
   totalFiles: "{n} files",
@@ -294,7 +294,7 @@ export default {
   cliFeatBatch: "Batch Processing",
   cliFeatBatchDesc: "Glob expansion + 10 files per request for efficient batch processing.",
   cliFeatRecursive: "Recursive Scan",
-  cliFeatRecursiveDesc: "Automatically scan all .ass/.ssa files in directories and subdirectories.",
+  cliFeatRecursiveDesc: "Automatically scan all .ass/.ssa/.srt files in directories and subdirectories.",
   cliFeatConfig: "Persistent Config",
   cliFeatConfigDesc: "Server URL and API key saved to local config file — no need to type every time.",
   cliConfigTitle: "Configuration",

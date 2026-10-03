@@ -42,3 +42,6 @@ npm-debug.log*
 
 # Rust build artifacts
 cli/target/
+# Python verification artifacts
+__pycache__/
+*.pyc

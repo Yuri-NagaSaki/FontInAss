@@ -1,3 +1,4 @@
+import { normalizeLooseFontName } from "@fontinass/font-catalog";
 import { Database, type SQLQueryBindings } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -34,6 +35,7 @@ const SCHEMA = `
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 PRAGMA synchronous=NORMAL;
+PRAGMA busy_timeout=5000;
 
 CREATE TABLE IF NOT EXISTS font_files (
   id TEXT PRIMARY KEY,
@@ -188,7 +190,7 @@ CREATE TABLE IF NOT EXISTS resolved_fonts (
 );
 `;
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function migrate(database: Database): void {
   const current = database.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
@@ -215,6 +217,14 @@ function migrate(database: Database): void {
       ) WHERE accepted_file_count = 0
     `);
     database.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_application ON api_tokens(application_id) WHERE application_id IS NOT NULL");
+    if (!columnExists(database, "font_names", "name_normalized")) {
+      addColumn(database, "font_names", "name_normalized", "TEXT NOT NULL DEFAULT ''");
+      const update = database.query("UPDATE font_names SET name_normalized = ? WHERE name_lower = ?");
+      for (const row of database.query<{ name_lower: string }, []>("SELECT DISTINCT name_lower FROM font_names").all()) {
+        update.run(normalizeLooseFontName(row.name_lower), row.name_lower);
+      }
+    }
+    database.run("CREATE INDEX IF NOT EXISTS idx_font_names_normalized ON font_names(name_normalized)");
     database.run(`PRAGMA user_version = ${SCHEMA_VERSION}`);
   })();
 }
@@ -309,7 +319,7 @@ export class SqliteFontCatalogRepository implements FontCatalogRepository {
 
   lookupByLooseNames(normalizedNames: string[]): FontLookupRow[] {
     const rows: LookupRow[] = [];
-    const expression = "lower(replace(replace(replace(n.name_lower, ' ', ''), '-', ''), '_', ''))";
+    const expression = "n.name_normalized";
     for (const part of chunks([...new Set(normalizedNames)], 200)) {
       if (!part.length) continue;
       rows.push(...this.database.raw.query<LookupRow, string[]>(`
@@ -350,11 +360,11 @@ export class SqliteFontCatalogRepository implements FontCatalogRepository {
 
   private insertFaces(fileId: string, faces: FontFaceMetadata[]): void {
     const faceStatement = this.database.raw.query("INSERT INTO font_faces (id, file_id, face_index, weight, bold, italic) VALUES (?, ?, ?, ?, ?, ?)");
-    const nameStatement = this.database.raw.query("INSERT OR IGNORE INTO font_names (name_lower, face_id) VALUES (?, ?)");
+    const nameStatement = this.database.raw.query("INSERT OR IGNORE INTO font_names (name_lower, face_id, name_normalized) VALUES (?, ?, ?)");
     for (const face of faces) {
       const faceId = crypto.randomUUID();
       faceStatement.run(faceId, fileId, face.index, face.weight, Number(face.bold), Number(face.italic));
-      for (const name of new Set(face.familyNames.map((value) => value.trim().toLowerCase()).filter(Boolean))) nameStatement.run(name, faceId);
+      for (const name of new Set(face.familyNames.map((value) => value.trim().toLowerCase()).filter(Boolean))) nameStatement.run(name, faceId, normalizeLooseFontName(name));
     }
   }
 

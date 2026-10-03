@@ -29,6 +29,7 @@ interface FileEntry {
   messages: string[];
   resultBytes: Uint8Array | null;
   code: number | null;
+  pending: boolean;
 }
 
 const files = ref<FileEntry[]>([]);
@@ -36,32 +37,35 @@ const dragActive = ref(false);
 let dragCounter = 0;
 
 // ─── Concurrency pool ─────────────────────────────────────────────────────────
-const MAX_CONCURRENT = 3;
+const MAX_CONCURRENT = 2;
 
-async function runWithConcurrency<T>(
-  tasks: Array<() => Promise<T>>,
-  limit = MAX_CONCURRENT,
-): Promise<void> {
-  const queue = [...tasks];
-  const workers: Promise<void>[] = [];
-  const runNext = async () => {
-    while (queue.length) {
-      const task = queue.shift()!;
-      await task();
+const taskQueue: Array<() => Promise<void>> = [];
+let activeTasks = 0;
+function runWithConcurrency(tasks: Array<() => Promise<void>>): Promise<void> {
+  const results = tasks.map(task => new Promise<void>((resolve, reject) => {
+    taskQueue.push(async () => { try { await task(); resolve(); } catch (error) { reject(error); } });
+  }));
+  const drain = () => {
+    while (activeTasks < MAX_CONCURRENT && taskQueue.length) {
+      activeTasks++;
+      void taskQueue.shift()!().finally(() => { activeTasks--; drain(); });
     }
   };
-  for (let i = 0; i < Math.min(limit, tasks.length); i++) {
-    workers.push(runNext());
-  }
-  await Promise.all(workers);
+  drain();
+  return Promise.all(results).then(() => undefined);
 }
 
 // ─── Processing ───────────────────────────────────────────────────────────────
 
 // Abort controller for the current processing batch — cancelled when the component unmounts
-let processingAbort: AbortController | null = null;
+const processingControllers = new Map<string, AbortController>();
+let disposed = false;
 
 const processFile = async (entry: FileEntry) => {
+  if (disposed || !files.value.includes(entry)) return;
+  const controller = new AbortController();
+  processingControllers.set(entry.key, controller);
+  entry.pending = true;
   entry.status = t("statusUploading");
   entry.messages = [];
   entry.resultBytes = null;
@@ -74,7 +78,7 @@ const processFile = async (entry: FileEntry) => {
       fontAliasSalt: settings.FONT_ALIAS_SALT,
       srtFormat: settings.SRT_FORMAT,
       srtStyle: settings.SRT_STYLE,
-      signal: processingAbort?.signal,
+      signal: controller.signal,
     });
     entry.code = res.code;
     entry.messages = res.messages ?? [];
@@ -85,6 +89,9 @@ const processFile = async (entry: FileEntry) => {
     if ((e as Error)?.name === "AbortError") return; // component unmounted mid-flight
     entry.status = t("statusError");
     entry.messages = [String(e instanceof Error ? e.message : e)];
+  } finally {
+    entry.pending = false;
+    processingControllers.delete(entry.key);
   }
 };
 
@@ -92,13 +99,12 @@ const addFiles = async (fileList: FileList | File[]) => {
   const supported = Array.from(fileList).filter(f => /\.(ass|ssa|srt)$/i.test(f.name));
   if (supported.length === 0) return;
   const entries: FileEntry[] = supported.map(f => reactive({
-    key: `${Date.now()}_${f.name}`,
+    key: crypto.randomUUID(),
     file: f, name: f.name,
     status: t("statusUploading"),
-    messages: [], resultBytes: null, code: null,
+    messages: [], resultBytes: null, code: null, pending: true,
   }));
   files.value.push(...entries);
-  processingAbort = new AbortController();
   await runWithConcurrency(entries.map(e => () => processFile(e)));
 };
 
@@ -107,7 +113,7 @@ const retryState = ref<"idle" | "running" | "done">("idle");
 const retryHint  = ref("");
 
 const retryFailed = async () => {
-  const failed = files.value.filter(f => f.code === null || f.code >= 300);
+  const failed = files.value.filter(f => !f.pending && (f.code === null || f.code >= 300));
   if (failed.length === 0) {
     retryHint.value = t("noFailed");
     setTimeout(() => { retryHint.value = ""; }, 2200);
@@ -115,18 +121,18 @@ const retryFailed = async () => {
   }
   retryState.value = "running";
   retryHint.value  = "";
-  failed.forEach(f => { f.status = t("statusRetrying"); });
+  failed.forEach(f => { f.pending = true; f.status = t("statusRetrying"); });
   await runWithConcurrency(failed.map(e => () => processFile(e)));
   retryState.value = "done";
   setTimeout(() => { retryState.value = "idle"; }, 1600);
 };
 
-const removeFile = (key: string) => { files.value = files.value.filter(f => f.key !== key); };
-const removeAll = () => { files.value = []; };
+const removeFile = (key: string) => { processingControllers.get(key)?.abort(); files.value = files.value.filter(f => f.key !== key); };
+const removeAll = () => { processingControllers.forEach(controller => controller.abort()); files.value = []; };
 
 // ─── Download ──────────────────────────────────────────────────────────────────
 const canDownload = computed(() => files.value.some(f => f.resultBytes));
-const hasFailed = computed(() => files.value.some(f => f.code === null || f.code >= 300));
+const hasFailed = computed(() => files.value.some(f => !f.pending && (f.code === null || f.code >= 300)));
 
 const downloadAll = async () => {
   const ready = files.value.filter(f => f.resultBytes);
@@ -138,7 +144,14 @@ const downloadAll = async () => {
   } else {
     const [{ default: JSZip }, { saveAs }] = await Promise.all([import("jszip"), import("file-saver")]);
     const zip = new JSZip();
-    for (const f of ready) zip.file(f.name.replace(/\.(ass|ssa|srt)$/i, ".subset.ass"), f.resultBytes!);
+    const used = new Set<string>();
+    for (const f of ready) {
+      const name = f.name.replace(/\.(ass|ssa|srt)$/i, ".subset.ass");
+      let output = name, copy = 1;
+      while (used.has(output)) output = `${copy++}-${name}`;
+      used.add(output);
+      zip.file(output, f.resultBytes!);
+    }
     const blob = await zip.generateAsync({ type: "blob" });
     saveAs(blob, "subset.zip");
   }
@@ -174,7 +187,8 @@ onMounted(() => {
   window.addEventListener("drop",      onDrop      as EventListener);
 });
 onBeforeUnmount(() => {
-  processingAbort?.abort();
+  disposed = true;
+  processingControllers.forEach(controller => controller.abort());
   window.removeEventListener("dragenter", onDragEnter as EventListener);
   window.removeEventListener("dragover",  onDragOver  as EventListener);
   window.removeEventListener("dragleave", onDragLeave as EventListener);

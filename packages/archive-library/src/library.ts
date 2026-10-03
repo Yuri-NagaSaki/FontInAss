@@ -79,6 +79,7 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
     if (!bytes) throw new ArchiveLibraryError("Pending archive file is unavailable", "not_found");
     const key = archiveKey(record, record.filename);
     const inspection = await this.inspector.inspect(record.filename, bytes);
+    if (!inspection.valid) throw new ArchiveLibraryError(`Invalid archive: ${inspection.error}`, "invalid");
     await this.published.put(key, bytes, archiveMimeType(inspection.type));
     const collision = this.repository.findByStorageKey(key);
     if (collision && collision.id !== id) this.repository.delete(collision.id);
@@ -164,7 +165,15 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
     return records.length;
   }
 
+  private manifestTail: Promise<void> = Promise.resolve();
+
   async writeManifest(): Promise<void> {
+    const write = this.manifestTail.then(() => this.persistManifest());
+    this.manifestTail = write.catch(() => undefined);
+    await write;
+  }
+
+  private async persistManifest(): Promise<void> {
     if (!this.published.isConfigured()) return;
     const archives = this.repository.listPublished().map(({ pending_path: _pendingPath, ...record }) => ({
       ...record,

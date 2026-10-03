@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync, lstatSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { AwsClient } from "aws4fetch";
 import { ARCHIVE_MANIFEST_KEY, ArchiveManifestSchema, type ArchiveManifest } from "@fontinass/contracts";
@@ -26,6 +26,10 @@ export class FsFontFileStore implements FontFileStore {
     if (rel === ".." || rel.startsWith(`..${sep}`) || resolve(path) === resolve(this.root, "..")) {
       throw new Error(`Path traversal blocked: ${key}`);
     }
+    for (let current = path; current !== this.root; current = dirname(current)) {
+      try { if (lstatSync(current).isSymbolicLink()) throw new Error("Font symlinks are not supported"); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
     return path;
   }
 
@@ -36,7 +40,9 @@ export class FsFontFileStore implements FontFileStore {
   async put(key: string, bytes: Uint8Array): Promise<void> {
     const path = this.path(key);
     mkdirSync(dirname(path), { recursive: true });
-    await writeFile(path, bytes);
+    const temporary = `${path}.${crypto.randomUUID()}.tmp`;
+    try { await writeFile(temporary, bytes, { flag: "wx" }); await rename(temporary, path); }
+    finally { await rm(temporary, { force: true }); }
   }
 
   async delete(key: string): Promise<void> {
@@ -113,7 +119,7 @@ export class FsPendingArchiveStore implements PendingArchiveStore {
   private safePath(path: string): string {
     const absolute = resolve(path);
     const rel = relative(this.root, absolute);
-    if (rel === ".." || rel.startsWith(`..${sep}`)) throw new Error("Pending path outside configured root");
+    if (!rel || dirname(absolute) === this.root || rel === ".." || rel.startsWith(`..${sep}`)) throw new Error("Pending path outside configured archive directory");
     return absolute;
   }
 

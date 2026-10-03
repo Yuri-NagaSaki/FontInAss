@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import * as opentype from "opentype.js";
 import { readSfntTables } from "./font-validator.js";
-import { parseFontFace, subsetParsedFont } from "./opentype-subsetter.js";
+import { subsetFontVariants } from "./native-subsetter.js";
+const parseFontFace = (bytes: Uint8Array, _index: number) => opentype.parse(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+async function subsetParsedFont(bytes: Uint8Array, name: string, _weight: number, _italic: boolean, unicodes: Set<number>, outputName: string, ps: string) { return (await subsetFontVariants(bytes, [{ faceIndex: 0, fontName: name, outputName, postScriptName: ps, attachmentName: ps, unicodes }]))[0]; }
 import { uudecode } from "./uuencode.js";
 
 function checksum(bytes: Uint8Array): number {
@@ -199,10 +201,24 @@ function makeLigaFont(): Uint8Array {
   return new Uint8Array(font.toArrayBuffer());
 }
 
-describe("subsetParsedFont", () => {
-  test("preserves vertical layout tables needed by ASS @ fonts", () => {
+describe("HarfBuzz font subsets", () => {
+  test("keeps every Unicode mapping when characters share a glyph", async () => {
+    const path = new opentype.Path();
+    path.moveTo(0,0); path.lineTo(100,700); path.close();
+    const shared = new opentype.Glyph({ name: "shared", unicode: 65, advanceWidth: 600, path });
+    shared.addUnicode(66);
+    const font = new opentype.Font({ familyName: "Shared", styleName: "Regular", unitsPerEm: 1000, ascender: 800, descender: -200, glyphs: [
+      new opentype.Glyph({ name: ".notdef", advanceWidth: 500, path: new opentype.Path() }), shared,
+    ] });
+    const result = await subsetParsedFont(new Uint8Array(font.toArrayBuffer()), "Shared", 400, false, new Set([65,66]), "FMULTI01", "FMULTI01");
+    expect(result.error).toBeNull();
+    const subset = parseSubset(result.encoded);
+    expect(subset.charToGlyphIndex("A")).toBeGreaterThan(0);
+    expect(subset.charToGlyphIndex("B")).toBe(subset.charToGlyphIndex("A"));
+  });
+  test("preserves vertical layout tables needed by ASS @ fonts", async () => {
     const parsed = parseFontFace(makeVerticalFixtureFont(), 0);
-    const result = subsetParsedFont(parsed, "VerticalFixture", 400, false, new Set([65]), "FVERT001", "FVERT001");
+    const result = await subsetParsedFont(makeVerticalFixtureFont(), "VerticalFixture", 400, false, new Set([65]), "FVERT001", "FVERT001");
 
     expect(result.error).toBeNull();
     const bytes = decodeSubsetFont(result.encoded);
@@ -212,11 +228,11 @@ describe("subsetParsedFont", () => {
     expect(tables.has("VORG")).toBe(true);
   });
 
-  test("keeps GSUB vert alternates that cmap does not name", () => {
+  test("keeps GSUB vert alternates that cmap does not name", async () => {
     const parsed = parseFontFace(makeVertGsubFont(), 0);
     expect(substitution(parsed).getSingle("vert")).toEqual([{ sub: 1, by: 2 }]);
 
-    const result = subsetParsedFont(parsed, "VertGsub", 400, false, new Set([65]), "FVERT002", "FVERT002");
+    const result = await subsetParsedFont(makeVertGsubFont(), "VertGsub", 400, false, new Set([65]), "FVERT002", "FVERT002");
     expect(result.error).toBeNull();
     const subset = parseSubset(result.encoded);
     const glyphCount = subset.numGlyphs ?? subset.glyphs.length;
@@ -226,11 +242,11 @@ describe("subsetParsedFont", () => {
     expect(subset.glyphs.get(2)?.advanceWidth).toBe(800);
   });
 
-  test("keeps liga glyphs that are only reachable through GSUB", () => {
+  test("keeps liga glyphs that are only reachable through GSUB", async () => {
     const parsed = parseFontFace(makeLigaFont(), 0);
     expect(substitution(parsed).getLigatures("liga")).toEqual([{ sub: [1, 2], by: 3 }]);
 
-    const result = subsetParsedFont(parsed, "LigaFixture", 400, false, new Set([102, 105]), "FLIGA001", "FLIGA001");
+    const result = await subsetParsedFont(makeLigaFont(), "LigaFixture", 400, false, new Set([102, 105]), "FLIGA001", "FLIGA001");
     expect(result.error).toBeNull();
     const subset = parseSubset(result.encoded);
     expect(subset.numGlyphs ?? subset.glyphs.length).toBe(4);

@@ -80,6 +80,10 @@ export function createContainer(config = loadRuntimeConfig()): AppContainer {
     if (schedulerRunning) return;
     schedulerRunning = true;
     try {
+      const cutoff = new Date(Date.now() - config.activityRetentionDays * 86_400_000).toISOString();
+      activity.prune(cutoff);
+      uploadAccess.pruneRateLimits(cutoff.slice(0, 10), cutoff.slice(0, 16));
+      logger.prune(config.activityRetentionDays);
       const scan = await fonts.scan();
       const dedup = await fonts.deduplicate();
       lastResult = {
@@ -110,6 +114,8 @@ export function createContainer(config = loadRuntimeConfig()): AppContainer {
   return {
     config, logger, database, fonts, archives, uploadAccess, submissions, activity, subtitles,
     async bootstrap() {
+      const native = Bun.spawn(["python3", "-c", "import fontTools; import subprocess; subprocess.run(['hb-subset', '--version'], check=True, stdout=subprocess.DEVNULL)"], { stdout: "ignore", stderr: "pipe" });
+      if (await native.exited !== 0) throw new Error(`Native font engine unavailable: ${await new Response(native.stderr).text()}`);
       fontFiles.ensureReady();
       logger.prune();
       if (!config.apiKey) logger.warn("[bootstrap] API_KEY is empty; font management endpoints are unauthenticated");

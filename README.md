@@ -3,7 +3,7 @@
 
 <p align="center">
   <strong>开源字幕字体子集化服务</strong><br>
-  上传 ASS / SSA / SRT 字幕，自动匹配字体并嵌入精简子集，体积减少 95%+
+  上传 ASS / SSA / SRT 字幕，自动匹配字体并嵌入精简子集，保留字体布局与字形信息
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@ FontInAss 是一个开源的字幕字体子集化工具。将 ASS/SSA/SRT 字幕
 
 ## 主要功能
 
-- 精准子集化，字体体积减少 95% 以上
+- 提取所需字符及其布局依赖，实际压缩比例取决于字体和字幕内容
 - 在线字体库，收录数万款中日韩及西文字体
 - 批量处理与可控并发
 - 跨平台 CLI 工具，本地批量处理
@@ -80,7 +80,7 @@ git pull --ff-only
 ./rebuild-and-start.sh
 ```
 
-脚本会先完成镜像构建，再 recreate 容器，并等待 `{ "status": "ok", "version": 2 }` 健康契约，避免构建期间停机。
+脚本要求先提交代码，并对部署加锁。构建期间旧服务继续运行；构建完成后，将 SQLite 在线备份到 `data/backups/`，再切换容器并验证健康契约及镜像提交号。切换失败会恢复 `fontinass-local:rollback` 镜像。备份文件含权限与业务数据，应限制访问并定期按运维策略清理。
 
 compose 将容器内存限制为 3GiB（`mem_limit` 与 `memswap_limit` 相同，不使用 swap）。超出后由内核 OOM 结束进程，`restart: unless-stopped` 会拉起新进程。
 
@@ -118,10 +118,10 @@ bun run data:reindex
 | `DB_PATH` | `./data/fontinass-v2.db` | v2 数据库路径 |
 | `PENDING_DIR` | `./data/pending-v2` | 待审核字幕包目录 |
 | `LOG_DIR` | `./data/logs` | 服务日志目录 |
-| `SUBSET_CONCURRENCY` | `5` | 批量字幕并行处理数 |
+| `SUBSET_CONCURRENCY` | `2` | 全局同时处理的字幕请求数；批次内依次处理，超额请求返回 503 |
 | `SUBSET_MAX_FILES` | `20` | 单次批量字幕文件数上限 |
-| `SUBSET_MAX_FILE_SIZE` | `67108864` | 单个字幕文件最大字节数 |
-| `SUBSET_MAX_BATCH_SIZE` | `268435456` | 单次批量字幕总字节上限 |
+| `SUBSET_MAX_FILE_SIZE` | `8388608` | 单个字幕文件最大字节数 |
+| `SUBSET_MAX_BATCH_SIZE` | `33554432` | 单次批量字幕总字节上限 |
 | `CACHE_MAX_ENTRIES` | `100` | 字幕结果内存缓存条目数 |
 | `CACHE_MAX_BYTES` | `67108864` | 字幕结果内存缓存字节上限 |
 | `ACTIVITY_RETENTION_DAYS` | `30` | 处理日志保留天数 |
@@ -137,7 +137,9 @@ bun run data:reindex
 | `SHARING_RATE_LIMIT` | `3` | 单 IP 每日社区投稿上限 |
 | `R2_*` | _(空)_ | 分享库使用的 Cloudflare R2 配置 |
 
-完整示例见 [.env.example](.env.example)。生产环境务必设置强随机 `API_KEY`，并通过反向代理提供 HTTPS。
+完整示例见 [.env.example](.env.example)。已有 `.env` 不会自动采用新默认值，3 GiB 容器建议设置 `SUBSET_CONCURRENCY=2`、`SUBSET_MAX_FILE_SIZE=8388608`、`SUBSET_MAX_BATCH_SIZE=33554432`。生产环境务必设置强随机 `API_KEY`，并通过反向代理提供 HTTPS。
+
+SRT 未提供自定义样式时使用 Arial 默认样式，输出为 ASS；缺少字体或字形时会报告。严格模式遇到缺字不会返回处理结果。别名包含所需字符集合，降低不同字幕轨的子集字体冲突；`preserve` 模式仍需使用者处理多轨同名字体的冲突。
 
 ## 字体上传权限
 
@@ -185,7 +187,7 @@ CLI 默认使用 `--font-name-mode alias`；`preserve` 保留字幕引用和内�
 
 ## 开发与验证
 
-需要 Bun 1.4.0：
+需要 Bun 1.4.0、Python 3（安装 FontTools 4.62.1）、HarfBuzz CLI（`hb-subset`）和 7z。Docker 镜像已包含这些依赖：
 
 ```bash
 bun install --frozen-lockfile
@@ -204,6 +206,18 @@ bun run data:manifest  # 从旧 DB 写入 R2 archive manifest
 bun run data:reindex   # 从 FONT_DIR 重建 v2 SQLite 字体索引
 ```
 
+## 审计与性能复查
+
+完整记录见 [2026-10-04 项目审计](docs/audits/2026-10-04-project-audit.md)。
+
+```bash
+bun scripts/benchmark-subset.ts http://127.0.0.1:3300 /tmp/fontinass-benchmark
+python3 scripts/verify-shaping.py /tmp/fontinass-benchmark
+python3 scripts/benchmark-lookup.py data/fontinass-v2.db
+```
+
+子集化基准使用合成字幕，会产生正常处理日志；字形对比脚本需要本地生产字体库及 `hb-shape`。冷处理隔离在有 CPU、内存和时间限制的子进程中，可能比旧实现耗时更长；服务主线程可继续响应其他请求。
+
 ## API 与设计文档
 
 - [v2 正式端点清单](docs/plans/2026-07-22-server-rewrite-endpoint-ledger.md)
@@ -217,7 +231,7 @@ bun run data:reindex   # 从 FONT_DIR 重建 v2 SQLite 字体索引
 | 运行时 | Bun |
 | 后端框架 | Hono |
 | 数据库 | SQLite |
-| 字体处理 | opentype.js |
+| 字体处理 | HarfBuzz + FontTools；直接读取 sfnt 名称与样式元数据 |
 | 前端 | Vue 3 + Tailwind CSS v4 |
 | CLI | Rust |
 | 部署 | Docker |

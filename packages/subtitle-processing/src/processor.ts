@@ -2,8 +2,11 @@ import { createHash } from "node:crypto";
 import { CODE, SubsetOptionsSchema, type SubsetOptions, type SubsetResult } from "@fontinass/contracts";
 import {
   analyseAss,
+  parseFontKey,
   checkFontsSection,
   decodeAssBytes,
+  DEFAULT_SRT_FORMAT,
+  DEFAULT_SRT_STYLE,
   insertFontSubsetComments,
   isSrt,
   removeFontSubsetComments,
@@ -11,7 +14,7 @@ import {
   renameAssFonts,
   srtToAss,
 } from "./ass-parser.js";
-import { parseFontFace, subsetParsedFont } from "./opentype-subsetter.js";
+import { subsetFontVariants, type FontSubsetVariant } from "./native-subsetter.js";
 
 export interface FontSourceMatchRequest {
   key: string;
@@ -26,6 +29,7 @@ export interface FontSourceMatch {
 }
 
 export interface FontSource {
+  readonly revision?: number;
   match(requests: FontSourceMatchRequest[]): Map<string, FontSourceMatch | null>;
   load(key: string): Promise<{ bytes: Uint8Array; resolvedKey: string } | null>;
 }
@@ -49,6 +53,7 @@ export interface SubtitleProcessorOptions {
 
 export class DefaultSubtitleProcessor implements SubtitleProcessor {
   private readonly cache: ResultCache;
+  private readonly inFlight = new Map<string, Promise<SubsetResult>>();
 
   constructor(
     private readonly fonts: FontSource,
@@ -60,19 +65,24 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
 
   async process(input: { filename: string; bytes: Uint8Array; options?: Partial<SubsetOptions> }): Promise<SubsetResult> {
     const options = SubsetOptionsSchema.parse(input.options ?? {});
-    const cacheKey = makeCacheKey(input.bytes, options);
+    const cacheKey = makeCacheKey(input.bytes, options) + ":" + (this.fonts.revision ?? 0);
     const cached = this.cache.get(cacheKey);
     if (cached) return { code: CODE.OK, messages: [], data: cached.bytes, fontCount: cached.fontCount };
+    const pending = this.inFlight.get(cacheKey);
+    if (pending) return pending;
+    const processing = this.processUncached(input, options, cacheKey);
+    this.inFlight.set(cacheKey, processing);
+    try { return await processing; } finally { this.inFlight.delete(cacheKey); }
+  }
 
+  private async processUncached(input: { filename: string; bytes: Uint8Array }, options: SubsetOptions, cacheKey: string): Promise<SubsetResult> {
     const decoded = decodeAssBytes(input.bytes);
     if (!decoded) return failure(CODE.CLIENT_ERROR, "Cannot decode subtitle file encoding", 0);
     let text = decoded.text;
 
     if (isSrt(text)) {
-      if (!options.srtFormat || !options.srtStyle) {
-        return failure(CODE.CLIENT_ERROR, "SRT→ASS conversion not configured (missing SRT format/style)", 0);
-      }
-      text = srtToAss(text, options.srtFormat, options.srtStyle);
+      if (Boolean(options.srtFormat) !== Boolean(options.srtStyle)) return failure(CODE.CLIENT_ERROR, "SRT format and style must be provided together");
+      text = srtToAss(text, options.srtFormat || DEFAULT_SRT_FORMAT, options.srtStyle || DEFAULT_SRT_STYLE);
     }
 
     const fontSection = checkFontsSection(text);
@@ -93,12 +103,14 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
     const { fontCharMap, originalNames } = analysis;
 
     const entries = Object.entries(fontCharMap);
+    if (entries.length > 256) return failure(CODE.CLIENT_ERROR, "Too many font variants (max 256)");
+    if (entries.reduce((count, [, chars]) => count + chars.size, 0) > 250_000) return failure(CODE.CLIENT_ERROR, "Too many font characters (max 250000)");
     if (!entries.length) return failure(CODE.CLIENT_ERROR, "No fonts referenced in subtitle", 0);
     const displayName = (name: string) => originalNames[name] ?? name;
-    const aliases = buildAliases(entries.map(([key]) => key.split("|")[0]), displayName, options.fontAliasSalt);
+    const aliases = buildAliases(entries.map(([key]) => parseFontKey(key)[0]), displayName, options.fontAliasSalt + JSON.stringify(entries.map(([key, cps]) => [key, [...cps].sort((a,b) => a-b)])));
     const requests = entries.map(([key]) => {
-      const [nameLower, weight, italic] = key.split("|");
-      return { key, nameLower, targetWeight: Number.parseInt(weight, 10), targetItalic: italic === "1" };
+      const [nameLower, weight, italic] = parseFontKey(key);
+      return { key, nameLower, targetWeight: weight, targetItalic: italic };
     });
 
     let matches: Map<string, FontSourceMatch | null>;
@@ -117,15 +129,16 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
     type Variant = { key: string; unicodeSet: Set<number>; nameLower: string; weight: number; italic: boolean };
     const byFile = new Map<string, Variant[]>();
     const results = new Map<string, { encoded: string; missingGlyphs: string; error: string | null }>();
+    let encodedBytes = 0;
     for (const [key, unicodeSet] of entries) {
-      const [nameLower, weight, italic] = key.split("|");
+      const [nameLower, weight, italic] = parseFontKey(key);
       const match = matches.get(key);
       if (!match) {
         results.set(key, { encoded: "", missingGlyphs: "", error: `Missing font: [${displayName(nameLower)}]` });
         continue;
       }
       const variants = byFile.get(match.key) ?? [];
-      variants.push({ key, unicodeSet, nameLower, weight: Number.parseInt(weight, 10), italic: italic === "1" });
+      variants.push({ key, unicodeSet, nameLower, weight: weight, italic: italic });
       byFile.set(match.key, variants);
     }
 
@@ -135,27 +148,38 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
         for (const variant of variants) results.set(variant.key, { encoded: "", missingGlyphs: "", error: `Failed to load font: [${displayName(variant.nameLower)}]` });
         continue;
       }
-      const byFace = new Map<number, Variant[]>();
+      // A renderer selects a face by family/style. Union glyphs when multiple
+      // requested weights fall back to the same physical face, avoiding duplicate
+      // attachments that each contain only part of the required characters.
+      const groups = new Map<string, Variant[]>();
       for (const variant of variants) {
+        const id = `${matches.get(variant.key)!.fontIndex}|${variant.nameLower}`;
+        const group = groups.get(id) ?? [];
+        group.push(variant);
+        groups.set(id, group);
+      }
+      const batches = [...groups.values()];
+      const specifications: FontSubsetVariant[] = batches.map(group => {
+        const variant = group[0];
+        const fontName = displayName(variant.nameLower);
+        const alias = aliases.get(variant.nameLower)!;
         const faceIndex = matches.get(variant.key)!.fontIndex;
-        byFace.set(faceIndex, [...(byFace.get(faceIndex) ?? []), variant]);
-      }
-      for (const [faceIndex, faceVariants] of byFace) {
-        let parsed: ReturnType<typeof parseFontFace>;
-        try {
-          parsed = parseFontFace(loaded.bytes, faceIndex);
-        } catch (error) {
-          const message = `Subsetting error [${loaded.resolvedKey}#${faceIndex}]: ${error instanceof Error ? error.message : String(error)}`;
-          for (const variant of faceVariants) results.set(variant.key, { encoded: "", missingGlyphs: "", error: message });
-          continue;
-        }
-        for (const variant of faceVariants) {
-          const fontName = displayName(variant.nameLower);
-          const alias = aliases.get(variant.nameLower) ?? fontName;
-          const outputName = options.fontNameMode === "preserve" ? fontName : alias;
-          results.set(variant.key, subsetParsedFont(parsed, fontName, variant.weight, variant.italic, variant.unicodeSet, outputName, alias));
-        }
-      }
+        const outputName = options.fontNameMode === "preserve" ? fontName : alias;
+        return {
+          faceIndex, fontName, outputName,
+          postScriptName: `${alias}-${faceIndex}-${variant.weight}-${variant.italic ? 1 : 0}`,
+          attachmentName: `${outputName}_${faceIndex}_${variant.weight}_${variant.italic ? 1 : 0}`,
+          unicodes: new Set(group.flatMap(v => [...v.unicodeSet])),
+        };
+      });
+      const subsetResults = await subsetFontVariants(loaded.bytes, specifications);
+      encodedBytes += subsetResults.reduce((total, result) => total + result.encoded.length, 0);
+      if (encodedBytes > 64 * 1024 * 1024) return failure(CODE.CLIENT_ERROR, "Embedded fonts exceed the 64 MiB budget");
+      batches.forEach((group, index) => {
+        group.forEach((variant, member) => results.set(variant.key, {
+          ...subsetResults[index], encoded: member === 0 ? subsetResults[index].encoded : "",
+        }));
+      });
     }
 
     const fontChunks = ["[Fonts]\n"];
@@ -164,7 +188,7 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
     for (const [key] of entries) {
       const result = results.get(key);
       if (!result) continue;
-      const [nameLower] = key.split("|");
+      const [nameLower] = parseFontKey(key);
       if (result.error) warnings.push(result.error);
       else {
         fontChunks.push(result.encoded);
@@ -186,7 +210,8 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
       ? insertFontSubsetComments(renameAssFonts(removeFontSubsetComments(text), aliasByOriginal), aliasToOriginal)
       : removeFontSubsetComments(text);
 
-    const eventsIndex = text.indexOf("[Events]");
+    if (options.fontsCheck && warnings.length) return { code: CODE.MISSING_FONT, messages: warnings, data: null, fontCount: entries.length };
+    const eventsIndex = text.search(/^\s*\[Events\][ \t]*$/im);
     if (eventsIndex === -1) return failure(CODE.CLIENT_ERROR, "No [Events] section found in subtitle", entries.length);
     const output = new TextEncoder().encode(`\uFEFF${text.slice(0, eventsIndex)}${fontsSection}\n${text.slice(eventsIndex)}`);
     if (!warnings.length) this.cache.set(cacheKey, output, entries.length);
@@ -206,7 +231,7 @@ function buildAliases(names: string[], displayName: (name: string) => string, sa
     if (aliases.has(name)) continue;
     let attempt = 0;
     while (true) {
-      const digest = createHash("sha1").update(displayName(name)).update("\0").update(salt.trim().slice(0, 80)).update("\0").update(String(attempt)).digest("hex").toUpperCase();
+      const digest = createHash("sha1").update(displayName(name)).update("\0").update(salt).update("\0").update(String(attempt)).digest("hex").toUpperCase();
       const alias = `F${digest.slice(0, 7)}`;
       if (!used.has(alias)) { aliases.set(name, alias); used.add(alias); break; }
       attempt++;
@@ -239,7 +264,7 @@ class ResultCache {
     const existing = this.entries.get(key);
     if (existing) this.totalBytes -= existing.bytes.byteLength;
     this.entries.delete(key);
-    if (this.maxEntries <= 0 || this.maxBytes <= 0) return;
+    if (this.maxEntries <= 0 || bytes.byteLength > this.maxBytes || this.ttlMs <= 0) return;
     this.entries.set(key, { bytes, fontCount, expiresAt: Date.now() + this.ttlMs });
     this.totalBytes += bytes.byteLength;
     while (this.entries.size && (this.entries.size > this.maxEntries || this.totalBytes > this.maxBytes)) {

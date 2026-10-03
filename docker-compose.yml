@@ -1,8 +1,24 @@
 services:
   fontinass:
-    build: .
+    image: fontinass-local:${FONTINASS_IMAGE_TAG:-local}
+    build:
+      context: .
+      args:
+        BUILD_REVISION: ${BUILD_REVISION:-unknown}
     container_name: fontinass-local
     restart: unless-stopped
+    init: true
+    pids_limit: 128
+    stop_grace_period: 40s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     # Cap container memory so subset jobs cannot unbounded-grow host RSS.
     # memswap_limit == mem_limit disables swap; OOM restarts via unless-stopped.
     mem_limit: 3g
@@ -22,12 +38,12 @@ services:
       - DB_PATH=/app/data/fontinass-v2.db
       - API_KEY=${API_KEY:-}
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
-      - SUBSET_CONCURRENCY=${SUBSET_CONCURRENCY:-5}
+      - SUBSET_CONCURRENCY=${SUBSET_CONCURRENCY:-2}
       - CACHE_MAX_ENTRIES=${CACHE_MAX_ENTRIES:-100}
       - CACHE_MAX_BYTES=${CACHE_MAX_BYTES:-67108864}
       - SUBSET_MAX_FILES=${SUBSET_MAX_FILES:-20}
-      - SUBSET_MAX_FILE_SIZE=${SUBSET_MAX_FILE_SIZE:-67108864}
-      - SUBSET_MAX_BATCH_SIZE=${SUBSET_MAX_BATCH_SIZE:-268435456}
+      - SUBSET_MAX_FILE_SIZE=${SUBSET_MAX_FILE_SIZE:-8388608}
+      - SUBSET_MAX_BATCH_SIZE=${SUBSET_MAX_BATCH_SIZE:-33554432}
       - ACTIVITY_RETENTION_DAYS=${ACTIVITY_RETENTION_DAYS:-30}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}

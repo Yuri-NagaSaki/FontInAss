@@ -31,6 +31,40 @@ function testConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
 }
 
 describe("health and subset limits", () => {
+  test("bounds all concurrent requests before reading bodies and releases slots", async () => {
+    const config = testConfig({ subsetConcurrency: 1 });
+    mkdirSync(config.logDirectory, { recursive: true });
+    const container = createContainer(config);
+    let release!: () => void;
+    let entered!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    container.subtitles = { async process() { entered(); await waiting; return { code: 200, messages: [], data: new Uint8Array([1]) }; } };
+    const app = createApp(container);
+    try {
+      const first = app.request("/api/subset", { method: "POST", body: "A" });
+      await started;
+      const second = await app.request("/api/subset", { method: "POST", body: "B" });
+      expect(second.status).toBe(503);
+      expect(second.headers.get("Retry-After")).toBe("2");
+      expect((await app.request("/api/health")).status).toBe(200);
+      release();
+      expect((await first).status).toBe(200);
+      expect((await app.request("/api/subset", { method: "POST", body: "C" })).status).toBe(200);
+    } finally { release(); container.close(); }
+  });
+
+  test("rejects oversized streaming bodies without Content-Length", async () => {
+    const config = testConfig({ subsetMaxFileSize: 8 });
+    mkdirSync(config.logDirectory, { recursive: true });
+    const container = createContainer(config);
+    try {
+      const app = createApp(container);
+      const response = await app.request("/api/subset", { method: "POST", body: new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(16)); controller.close(); } }) });
+      expect(response.headers.get("X-Code")).toBe("400");
+    } finally { container.close(); }
+  });
+
   test("GET /api/health is unauthenticated and returns the v2 contract", async () => {
     const config = testConfig();
     mkdirSync(config.logDirectory, { recursive: true });

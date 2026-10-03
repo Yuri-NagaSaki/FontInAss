@@ -199,10 +199,18 @@ export async function subsetFile(file: File, options: Partial<SubsetOptions> & {
   if (options.fontAliasSalt) headers["X-Font-Alias-Salt"] = base64Encode(options.fontAliasSalt);
   if (options.srtFormat) headers["X-Srt-Format"] = base64Encode(options.srtFormat);
   if (options.srtStyle) headers["X-Srt-Style"] = base64Encode(options.srtStyle);
-  const response = await fetch(manualUrl("/api/subset"), { method: "POST", headers, body: await file.arrayBuffer(), signal: options.signal });
+  const response = await fetch(manualUrl("/api/subset"), { method: "POST", headers, body: file, signal: options.signal });
   const bytes = new Uint8Array(await response.arrayBuffer());
   const messageHeader = response.headers.get("x-message") ?? "";
-  return { code: Number.parseInt(response.headers.get("x-code") ?? "500", 10), messages: messageHeader ? JSON.parse(base64Decode(messageHeader)) as string[] : [], data: bytes.byteLength ? bytes : null };
+  if (!response.ok) {
+    let message = `HTTP ${response.status}`;
+    try { message = JSON.parse(new TextDecoder().decode(bytes)).error ?? message; } catch { /* non-JSON proxy response */ }
+    throw new Error(message);
+  }
+  const code = Number.parseInt(response.headers.get("x-code") ?? "500", 10);
+  const messages = messageHeader ? JSON.parse(base64Decode(messageHeader)) as string[] : [];
+  if (!Number.isFinite(code)) throw new Error("Invalid server response");
+  return { code, messages, data: (code === 200 || code === 201) && bytes.byteLength ? bytes : null };
 }
 
 export async function listSharedArchives(): Promise<SharedArchive[]> { return json(await api.archives.$get()); }

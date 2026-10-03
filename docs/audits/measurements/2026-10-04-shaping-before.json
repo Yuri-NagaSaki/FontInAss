@@ -1,0 +1,79 @@
+[
+  {
+    "case": "latin",
+    "sourceBytes": 1047208,
+    "subsetBytes": 11328,
+    "positionsEqual": false,
+    "outlinesEqual": false,
+    "sourceTables": [
+      "GSUB",
+      "GPOS",
+      "GDEF",
+      "glyf"
+    ],
+    "subsetTables": [
+      "CFF "
+    ]
+  },
+  {
+    "case": "cjk",
+    "sourceBytes": 23607740,
+    "subsetBytes": 12104,
+    "positionsEqual": true,
+    "outlinesEqual": false,
+    "sourceTables": [
+      "GSUB",
+      "GPOS",
+      "GDEF",
+      "vhea",
+      "vmtx",
+      "glyf"
+    ],
+    "subsetTables": [
+      "GSUB",
+      "vhea",
+      "vmtx",
+      "CFF "
+    ]
+  },
+  {
+    "case": "vertical",
+    "sourceBytes": 17281372,
+    "subsetBytes": 8068,
+    "positionsEqual": true,
+    "outlinesEqual": true,
+    "sourceTables": [
+      "GSUB",
+      "GPOS",
+      "GDEF",
+      "vhea",
+      "vmtx",
+      "VORG",
+      "CFF "
+    ],
+    "subsetTables": [
+      "GSUB",
+      "vhea",
+      "vmtx",
+      "VORG",
+      "CFF "
+    ]
+  },
+  {
+    "case": "arabic",
+    "sourceBytes": 720012,
+    "subsetBytes": 24700,
+    "positionsEqual": false,
+    "outlinesEqual": false,
+    "sourceTables": [
+      "GSUB",
+      "GPOS",
+      "GDEF",
+      "glyf"
+    ],
+    "subsetTables": [
+      "GSUB",
+      "CFF "
+    ]
+  }
+]

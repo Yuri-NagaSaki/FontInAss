@@ -1,0 +1,50 @@
+[
+  {
+    "query": "legacy-scan",
+    "medianMs": 47.983,
+    "plan": [
+      [
+        6,
+        0,
+        0,
+        "SCAN n USING COVERING INDEX sqlite_autoindex_font_names_1"
+      ],
+      [
+        14,
+        0,
+        0,
+        "SEARCH f USING INDEX sqlite_autoindex_font_faces_1 (id=?)"
+      ],
+      [
+        19,
+        0,
+        0,
+        "SEARCH ff USING INDEX sqlite_autoindex_font_files_1 (id=?)"
+      ]
+    ]
+  },
+  {
+    "query": "normalized-index",
+    "medianMs": 0.003,
+    "plan": [
+      [
+        7,
+        0,
+        0,
+        "SEARCH n USING INDEX idx_font_names_normalized (name_normalized=?)"
+      ],
+      [
+        14,
+        0,
+        0,
+        "SEARCH f USING INDEX sqlite_autoindex_font_faces_1 (id=?)"
+      ],
+      [
+        19,
+        0,
+        0,
+        "SEARCH ff USING INDEX sqlite_autoindex_font_files_1 (id=?)"
+      ]
+    ]
+  }
+]

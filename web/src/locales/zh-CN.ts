@@ -177,7 +177,7 @@ export default {
   emptyFolder: "空文件夹",
   // Subset view
   dropZoneTitle: "拖拽字幕文件至此",
-  dropZoneHint: "支持 .ass / .ssa，可批量处理",
+  dropZoneHint: "支持 .ass / .ssa / .srt，可批量处理",
   chooseFiles: "选择文件",
   dropHere: "松手上传",
   totalFiles: "共 {n} 个文件",
@@ -294,7 +294,7 @@ export default {
   cliFeatBatch: "批量处理",
   cliFeatBatchDesc: "通配符展开 + 每 10 个文件一次请求，高效处理大量字幕。",
   cliFeatRecursive: "递归扫描",
-  cliFeatRecursiveDesc: "自动扫描目录下所有 .ass/.ssa 文件，支持嵌套子目录。",
+  cliFeatRecursiveDesc: "自动扫描目录下所有 .ass/.ssa/.srt 文件，支持嵌套子目录。",
   cliFeatConfig: "持久化配置",
   cliFeatConfigDesc: "服务器地址和 API Key 保存到本地配置文件，无需每次输入。",
   cliConfigTitle: "配置文件",

@@ -158,6 +158,7 @@ function groupByName(rows: FontLookupRow[]): Map<string, FontLookupRow[]> {
 }
 
 export class FontCatalog {
+  revision = 0;
   private readonly contributions = new Map<string, Promise<FontContributionResult>>();
 
   constructor(
@@ -211,6 +212,9 @@ export class FontCatalog {
   }
 
   async index(filename: string, bytes: Uint8Array, existingKey?: string, sha256?: string): Promise<UploadResult> {
+    const validation = this.validate(filename, bytes);
+    if (!validation.valid) return { filename, id: "", faces: 0, error: validation.error ?? "Invalid font" };
+    filename = filename.replace(/[/\\]/g, "_");
     const contentHash = sha256 ?? createHash("sha256").update(bytes).digest("hex");
     let faces = this.inspector.inspect(bytes);
     if (faces.length === 0 || faces.every((face) => face.familyNames.length === 0)) {
@@ -224,19 +228,13 @@ export class FontCatalog {
     const key = existingKey ?? `fonts/${id}/${filename}`;
     if (!existingKey) await this.files.put(key, bytes);
     this.repository.insertFile({ id, filename, key, size: bytes.length, sha256: contentHash }, faces);
+    this.revision++;
     return { filename, id, faces: faces.length };
   }
 
   async upload(filename: string, bytes: Uint8Array, targetDirectory?: string): Promise<UploadResult> {
-    const validation = this.validate(filename, bytes);
-    if (!validation.valid) return { filename, id: "", faces: 0, error: validation.error ?? "Invalid font" };
-    const directory = sanitizeDirectory(targetDirectory ?? "");
-    if (!directory) return this.index(filename, bytes);
-    const key = `${directory}${filename.replace(/[/\\]/g, "_")}`;
-    const existing = this.repository.findByKey(key);
-    if (existing) this.repository.deleteByIds([existing.id]);
-    await this.files.put(key, bytes);
-    return this.index(filename, bytes, key);
+    const result = await this.contribute(filename, bytes, targetDirectory || "fonts/");
+    return { filename, id: result.fontId ?? "", faces: result.faces, ...(result.error ? { error: result.error } : {}) };
   }
 
   async contribute(filename: string, bytes: Uint8Array, targetDirectory: string): Promise<FontContributionResult> {
@@ -296,11 +294,15 @@ export class FontCatalog {
 
   async delete(ids: string[]): Promise<number> {
     const deleted = this.repository.deleteByIds(ids);
+    if (deleted.length) this.revision++;
     await Promise.all(deleted.map((entry) => this.files.delete(entry.key)));
     return deleted.length;
   }
 
+  private statsCache: { value: FontStats; revision: number; expiresAt: number } | null = null;
+
   stats(): FontStats {
+    if (this.statsCache && this.statsCache.revision === this.revision && this.statsCache.expiresAt > Date.now()) return this.statsCache.value;
     const indexedByFolder = new Map(this.repository.countByTopFolder().map((item) => [item.prefix, item.count]));
     for (const folder of this.files.browse("").folders) if (!indexedByFolder.has(folder)) indexedByFolder.set(folder, 0);
 
@@ -310,7 +312,7 @@ export class FontCatalog {
     };
 
     const folders = [...indexedByFolder.entries()].map(([prefix, indexed]) => {
-      const onDisk = countOnDisk(prefix === "(root)/" ? "" : prefix);
+      const onDisk = prefix === "(root)/" ? this.files.browse("").files.length : countOnDisk(prefix);
       const status =
         onDisk === 0 && indexed === 0 ? "empty" as const
         : indexed < onDisk ? "pending" as const
@@ -322,7 +324,9 @@ export class FontCatalog {
     const onDisk = folders.reduce((sum, folder) => sum + folder.onDisk, 0);
     const total = this.repository.countFiles();
     const unindexed = folders.reduce((sum, folder) => sum + Math.max(0, folder.onDisk - folder.indexed), 0);
-    return { total, onDisk, unindexed, folders };
+    const value = { total, onDisk, unindexed, folders };
+    this.statsCache = { value, revision: this.revision, expiresAt: Date.now() + 30_000 };
+    return value;
   }
 
   browse(prefix: string): BrowseResponse {
@@ -341,7 +345,7 @@ export class FontCatalog {
   }
 
   async indexKeys(input: { prefix?: string; keys?: string[]; batchSize: number }): Promise<IndexFontsResponse> {
-    const selected = input.keys?.length
+    const selected = input.keys !== undefined
       ? input.keys.map((key) => ({ key, size: 0, name: key.split("/").pop() ?? key }))
       : this.files.list(input.prefix ?? "").slice(0, input.batchSize);
     const existing = this.repository.findExistingKeys(selected.map((file) => file.key));
@@ -374,7 +378,7 @@ export class FontCatalog {
     const result = await this.indexKeys({ keys: all.filter((file) => !indexedKeys.has(file.key)).map((file) => file.key), batchSize: all.length || 1 });
     const live = new Set(all.map((file) => file.key));
     const orphans = this.repository.listFileEntries().filter((entry) => !live.has(entry.key));
-    if (orphans.length) this.repository.deleteByIds(orphans.map((entry) => entry.id));
+    if (orphans.length) { this.repository.deleteByIds(orphans.map((entry) => entry.id)); this.revision++; }
     return { total: all.length, indexed: result.indexed, skipped: indexedKeys.size, purged: orphans.length, errors: result.errors.slice(0, 100) };
   }
 
@@ -387,6 +391,7 @@ export class FontCatalog {
       const faces = bytes ? this.inspector.inspect(bytes) : [];
       if (!bytes || faces.length === 0 || faces.every((face) => face.familyNames.length === 0)) { failed++; continue; }
       this.repository.replaceFaces(file.id, faces);
+      this.revision++;
       repaired++;
     }
     return { attempted: broken.length, repaired, failed };

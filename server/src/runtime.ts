@@ -43,13 +43,13 @@ export function loadRuntimeConfig(cwd = process.cwd()): RuntimeConfig {
     pendingDirectory: path(process.env.PENDING_DIR ?? "./data/pending-v2"),
     logDirectory: path(process.env.LOG_DIR ?? "./data/logs"),
     logLevel: logLevel(process.env.LOG_LEVEL ?? "info"),
-    subsetConcurrency: integer("SUBSET_CONCURRENCY", 5, 1, 64),
+    subsetConcurrency: integer("SUBSET_CONCURRENCY", 2, 1, 64),
     cacheMaxEntries: integer("CACHE_MAX_ENTRIES", 100, 0, 10000),
     cacheMaxBytes: integer("CACHE_MAX_BYTES", 64 * 1024 * 1024, 0),
     cacheTtlMs: integer("CACHE_TTL_MS", 48 * 60 * 60 * 1000, 0),
     subsetMaxFiles: integer("SUBSET_MAX_FILES", 20, 1, 100),
-    subsetMaxFileSize: integer("SUBSET_MAX_FILE_SIZE", 64 * 1024 * 1024, 1),
-    subsetMaxBatchSize: integer("SUBSET_MAX_BATCH_SIZE", 256 * 1024 * 1024, 1),
+    subsetMaxFileSize: integer("SUBSET_MAX_FILE_SIZE", 8 * 1024 * 1024, 1),
+    subsetMaxBatchSize: integer("SUBSET_MAX_BATCH_SIZE", 32 * 1024 * 1024, 1),
     activityRetentionDays: integer("ACTIVITY_RETENTION_DAYS", 30, 1, 3650),
     uploadTargetDirectory: (process.env.UPLOAD_TARGET_DIR ?? "CatCat-Fonts/").replace(/\/?$/, "/"),
     publicUploadMaxFiles: integer("PUBLIC_UPLOAD_MAX_FILES", 20, 1, 100),
@@ -114,7 +114,7 @@ export function masterKeyMatches(configured: string, candidate?: string | null):
 }
 
 function integer(name: string, fallback: number, min: number, max = Number.MAX_SAFE_INTEGER): number {
-  const value = Number.parseInt(process.env[name] ?? String(fallback), 10);
+  const value = Number(process.env[name] ?? fallback);
   if (!Number.isSafeInteger(value) || value < min || value > max) throw new Error(`${name} must be an integer between ${min} and ${max}`);
   return value;
 }

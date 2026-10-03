@@ -76,6 +76,8 @@ Options:
       --alias-salt <TEXT>      Extra salt for generated alias names
 ```
 
+.srt input is written as .ass; the original SRT is preserved. Output name collisions are rejected before processing. Files are replaced atomically only after a successful response; strict mode never writes warning results.
+
 **Supported formats:** `.ass`, `.ssa`, `.srt`
 
 **Batch processing:** Files are sent in batches of 10 per request for efficiency.
@@ -137,7 +139,7 @@ In `--strict` mode, warnings (partial font matches) also cause exit code 1.
 ## Build from Source
 
 ```bash
-# Requires Rust 1.80+
+# Requires Rust 1.85+
 cd cli
 cargo build --release
 # Binary at: target/release/fontinass

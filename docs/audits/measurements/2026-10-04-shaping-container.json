@@ -1,0 +1,87 @@
+[
+  {
+    "case": "latin",
+    "sourceBytes": 1047208,
+    "subsetBytes": 37436,
+    "positionsEqual": true,
+    "outlinesEqual": true,
+    "sourceTables": [
+      "GSUB",
+      "GPOS",
+      "GDEF",
+      "glyf"
+    ],
+    "subsetTables": [
+      "GSUB",
+      "GPOS",
+      "GDEF",
+      "glyf"
+    ]
+  },
+  {
+    "case": "cjk",
+    "sourceBytes": 23607740,
+    "subsetBytes": 19764,
+    "positionsEqual": true,
+    "outlinesEqual": true,
+    "sourceTables": [
+      "GSUB",
+      "GPOS",
+      "GDEF",
+      "vhea",
+      "vmtx",
+      "glyf"
+    ],
+    "subsetTables": [
+      "GSUB",
+      "GPOS",
+      "GDEF",
+      "vhea",
+      "vmtx",
+      "glyf"
+    ]
+  },
+  {
+    "case": "vertical",
+    "sourceBytes": 17281372,
+    "subsetBytes": 11956,
+    "positionsEqual": true,
+    "outlinesEqual": true,
+    "sourceTables": [
+      "GSUB",
+      "GPOS",
+      "GDEF",
+      "vhea",
+      "vmtx",
+      "VORG",
+      "CFF "
+    ],
+    "subsetTables": [
+      "GSUB",
+      "GPOS",
+      "vhea",
+      "vmtx",
+      "VORG",
+      "CFF "
+    ]
+  },
+  {
+    "case": "arabic",
+    "sourceBytes": 720012,
+    "subsetBytes": 24744,
+    "positionsEqual": true,
+    "outlinesEqual": true,
+    "sourceTables": [
+      "GSUB",
+      "GPOS",
+      "GDEF",
+      "glyf"
+    ],
+    "subsetTables": [
+      "GSUB",
+      "GPOS",
+      "GDEF",
+      "glyf"
+    ]
+  }
+]

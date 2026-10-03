@@ -6,6 +6,13 @@
 # Build outputs
 **/dist
 **/build
+**/target
+**/__pycache__
+.env.*
+**/.env.*
+cli/
+tests/
+docs/
 
 # Font files (mount as volume instead)
 fonts/

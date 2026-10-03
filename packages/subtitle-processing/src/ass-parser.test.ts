@@ -1,5 +1,40 @@
 import { describe, expect, test } from "bun:test";
-import { renameAssFonts } from "./ass-parser.js";
+import { analyseAss, checkFontsSection, removeSection, renameAssFonts } from "./ass-parser.js";
+
+function analyse(text: string, style = "Default,Fixture,-1,-1", section = "V4+ Styles") {
+  return analyseAss(`[Script Info]\n[${section}]\nFormat: Name, Fontname, Bold, Italic\nStyle: ${style}\n[Events]\nFormat: Style, Text\nDialogue: Default,${text}`);
+}
+
+describe("ASS and SSA font usage", () => {
+  test("recognizes negative style booleans and SSA sections", () => {
+    expect([...analyse("A", undefined, "V4 Styles").fontCharMap["fixture|700|1"]]).toEqual([65]);
+  });
+  test("ignores drawings and restores default styles for bare tags", () => {
+    const result = analyse(String.raw`{\p1}m 0 0 l 50 50{\p0\b0\i0}B{\b\i}A`);
+    expect([...result.fontCharMap["fixture|400|0"]]).toEqual([66]);
+    expect([...result.fontCharMap["fixture|700|1"]]).toEqual([65]);
+  });
+  test("includes hard spaces and soft line break spaces", () => {
+    expect([...analyse(String.raw`A\hB\nC\ND`).fontCharMap["fixture|700|1"]]).toEqual([65, 160, 66, 32, 67, 68]);
+  });
+  test("retains both font styles across transforms without leaking parentheses", () => {
+    const result = analyse(String.raw`{\t(0,100,\b0)}A`);
+    expect([...result.fontCharMap["fixture|700|1"]]).toEqual([65]);
+    expect([...result.fontCharMap["fixture|400|1"]]).toEqual([65]);
+  });
+  test("supports prototype-shaped names and preserves dialogue trailing spaces", () => {
+    expect([...analyse("A ", "Default,constructor,0,0").fontCharMap["constructor|400|0"]]).toEqual([65,32]);
+  });
+  test("accepts mixed case sections and intervening metadata", () => {
+    const text = "[v4+ styles]\nFormat: Name,Fontname\nStyle: Default,Fixture\n[Aegisub Project Garbage]\nfoo\n[events]\nFormat: Style,Text\nDialogue: Default,A";
+    expect([...analyseAss(text).fontCharMap["fixture|400|0"]]).toEqual([65]);
+  });
+  test("finds Fonts only at section boundaries", () => {
+    const text = "[Script Info]\nTitle: [Fonts]\n[Fonts]\nfontname:a.ttf\nABC[DEF\n[Events]\nDialogue: A";
+    expect(checkFontsSection(text)).toBe(2);
+    expect(removeSection(text,"Fonts")).toBe("[Script Info]\nTitle: [Fonts]\n[Events]\nDialogue: A");
+  });
+});
 
 describe("renameAssFonts", () => {
   test("renames font fields and override tags without changing other text", () => {

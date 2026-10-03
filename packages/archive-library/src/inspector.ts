@@ -1,8 +1,7 @@
 /**
  * Archive utility — unified ZIP and 7z support.
  *
- * ZIP:  Parsed in-process with a minimal central-directory scanner (no deps).
- * 7z:   Listed via the `7z l` CLI command (p7zip-full installed in Docker).
+ * Both formats are listed once via 7z with time, entry and output limits.
  */
 
 import type { ArchiveInspection, ArchiveInspector } from "./index.js";
@@ -46,100 +45,59 @@ export function archiveMimeType(type: ArchiveType): string {
 
 // ─── Filename extraction ──────────────────────────────────────────────────────
 
-/** Extract filenames from a ZIP central directory (minimal in-process parser). */
-function extractZipFilenames(buf: Buffer, maxUncompressed: number): string[] {
-  const names: string[] = [];
-  const searchStart = Math.max(0, buf.length - 65536);
-  let eocdOffset = -1;
-  for (let i = buf.length - 22; i >= searchStart; i--) {
-    if (buf[i] === 0x50 && buf[i + 1] === 0x4b && buf[i + 2] === 0x05 && buf[i + 3] === 0x06) {
-      eocdOffset = i;
-      break;
-    }
-  }
-  if (eocdOffset < 0) return names;
-
-  const cdOffset = buf.readUInt32LE(eocdOffset + 16);
-  const cdEntries = buf.readUInt16LE(eocdOffset + 10);
-  let pos = cdOffset;
-  let totalUncompressed = 0;
-
-  for (let i = 0; i < cdEntries && pos < buf.length - 46; i++) {
-    if (buf[pos] !== 0x50 || buf[pos + 1] !== 0x4b || buf[pos + 2] !== 0x01 || buf[pos + 3] !== 0x02) break;
-    const uncompressedSize = buf.readUInt32LE(pos + 24);
-    totalUncompressed += uncompressedSize;
-    if (totalUncompressed > maxUncompressed) {
-      throw new Error("ZIP uncompressed size exceeds configured limit (possible zip bomb)");
-    }
-    const nameLen = buf.readUInt16LE(pos + 28);
-    const extraLen = buf.readUInt16LE(pos + 30);
-    const commentLen = buf.readUInt16LE(pos + 32);
-    const name = buf.subarray(pos + 46, pos + 46 + nameLen).toString("utf-8");
-    if (!name.endsWith("/")) names.push(name);
-    pos += 46 + nameLen + extraLen + commentLen;
-  }
-  return names;
-}
-
-/**
- * Extract filenames from a 7z archive using the `7z l` CLI.
- * Writes buf to a temp file, runs `7z l`, parses the tabular output.
- */
-async function extract7zFilenames(buf: Buffer, maxUncompressed: number): Promise<string[]> {
-  const tmpPath = `/tmp/_7z_list_${Date.now()}_${Math.random().toString(36).slice(2)}.7z`;
+/** Use the maintained archive reader for ZIP/ZIP64 and 7z alike. Never extract. */
+export async function extractArchiveFilenames(buf: Buffer, maxUncompressed = 2 * 1024 * 1024 * 1024): Promise<string[]> {
+  if (!detectArchiveType(buf)) return [];
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const directory = await mkdtemp(join(tmpdir(), "fontinass-archive-"));
   try {
-    await Bun.write(tmpPath, buf);
-    const proc = Bun.spawn(["7z", "l", "-slt", tmpPath], {
-      stdout: "pipe",
-      stderr: "pipe",
+    const path = join(directory, "input.archive");
+    await writeFile(path, buf);
+    const proc = Bun.spawn(["7z", "l", "-slt", "-ba", "-sccUTF-8", "--", path], {
+      stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 20_000, killSignal: "SIGKILL",
     });
-    const stdout = await new Response(proc.stdout).text();
-    const exitCode = await proc.exited;
-
-    if (exitCode !== 0) {
-      await new Response(proc.stderr).text();
-      return [];
-    }
-
-    // -slt output: blocks separated by blank lines, each block has "Key = Value" lines.
-    // The first block with "Path = ..." is the archive itself (no "Size" key for files) — skip it.
-    // File entry blocks have both "Path = " and "Size = " lines.
-    const names: string[] = [];
-    const blocks = stdout.split(/\n\n+/);
-    let totalUncompressed = 0;
-    for (const block of blocks) {
-      const lines = block.split("\n").map(l => l.trim());
-      const pathLine = lines.find(l => l.startsWith("Path = "));
-      const sizeLine = lines.find(l => l.startsWith("Size = "));
-      const folderLine = lines.find(l => l.startsWith("Folder = "));
-      if (!pathLine || !sizeLine) continue; // skip archive header (no Size line)
-      const isFolder = folderLine?.endsWith("= +");
-      if (isFolder) continue;
-      const sz = Number(sizeLine.slice("Size = ".length).trim());
-      if (Number.isFinite(sz) && sz > 0) {
-        totalUncompressed += sz;
-        if (totalUncompressed > maxUncompressed) {
-          throw new Error("7z uncompressed size exceeds limit (possible 7z bomb)");
+    const read = async (stream: ReadableStream<Uint8Array>) => {
+      const reader = stream.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.length;
+          if (size > 4 * 1024 * 1024) { proc.kill("SIGKILL"); throw new Error("Archive listing is too large"); }
+          chunks.push(value);
         }
+      } finally { reader.releaseLock(); }
+      return Buffer.concat(chunks).toString("utf8");
+    };
+    const [stdout, , exitCode] = await Promise.all([read(proc.stdout), read(proc.stderr), proc.exited]);
+    if (exitCode !== 0) throw new Error("Archive is damaged, encrypted or unreadable");
+    const names: string[] = [];
+    let total = 0;
+    for (const block of stdout.trim().split(/\r?\n\r?\n+/)) {
+      const fields = new Map<string, string>();
+      for (const line of block.split(/\r?\n/)) {
+        const separator = line.indexOf(" = ");
+        if (separator < 1 || fields.has(line.slice(0, separator))) throw new Error("Invalid archive listing");
+        fields.set(line.slice(0, separator), line.slice(separator + 3));
       }
-      const name = pathLine.slice("Path = ".length);
-      if (name && !name.includes("..")) names.push(name);
+      const name = fields.get("Path");
+      if (!name) throw new Error("Archive entry has no name");
+      if (fields.get("Encrypted") === "+") throw new Error("Encrypted archives are not supported");
+      if (fields.has("Symbolic Link") || fields.has("Hard Link") || /(?:^|\s)l[rwx-]{9}/.test(fields.get("Attributes") ?? "")) throw new Error("Archive links are not supported");
+      if (/^(?:[\\/]|[a-z]:)/i.test(name) || name.split(/[\\/]/).includes("..") || /[\x00-\x1f]/.test(name)) throw new Error("Unsafe archive path");
+      const size = Number(fields.get("Size"));
+      if (!Number.isSafeInteger(size) || size < 0) throw new Error("Invalid archive entry size");
+      total += size;
+      if (total > maxUncompressed) throw new Error("Archive uncompressed size exceeds configured limit");
+      if (fields.get("Folder") !== "+" && !name.endsWith("/")) names.push(name);
+      if (names.length > 10000) throw new Error("Too many archive entries (max 10000)");
     }
     return names;
-  } finally {
-    try { const { unlinkSync } = await import("node:fs"); unlinkSync(tmpPath); } catch { /* ok */ }
-  }
-}
-
-/**
- * Extract filenames from any supported archive.
- * Returns empty array if format is unrecognized.
- */
-export async function extractArchiveFilenames(buf: Buffer, maxUncompressed = 2 * 1024 * 1024 * 1024): Promise<string[]> {
-  const type = detectArchiveType(buf);
-  if (type === "zip") return extractZipFilenames(buf, maxUncompressed);
-  if (type === "7z") return extract7zFilenames(buf, maxUncompressed);
-  return [];
+  } finally { await rm(directory, { recursive: true, force: true }); }
 }
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -150,12 +108,11 @@ export async function extractArchiveFilenames(buf: Buffer, maxUncompressed = 2 *
  * no blocked file types, at least one subtitle file.
  */
 export async function validateArchiveContents(buf: Buffer, maxUncompressed = 2 * 1024 * 1024 * 1024): Promise<ArchiveValidation> {
-  const type = detectArchiveType(buf);
-  if (!type) {
-    return { valid: false, error: "Not a valid archive (expected ZIP or 7z)", fileCount: 0, episodeCount: 0, subtitleFormats: [] };
-  }
+  try { return validateNames(await extractArchiveFilenames(buf, maxUncompressed)); }
+  catch (error) { return { valid: false, error: error instanceof Error ? error.message : String(error), fileCount: 0, episodeCount: 0, subtitleFormats: [] }; }
+}
 
-  const names = await extractArchiveFilenames(buf, maxUncompressed);
+function validateNames(names: string[]): ArchiveValidation {
   if (names.length === 0) {
     return { valid: false, error: "Archive appears empty or unreadable", fileCount: 0, episodeCount: 0, subtitleFormats: [] };
   }
@@ -165,7 +122,7 @@ export async function validateArchiveContents(buf: Buffer, maxUncompressed = 2 *
   let episodeCount = 0;
 
   for (const name of names) {
-    if (name.includes("..")) {
+    if (name.split(/[\\/]/).includes("..")) {
       return { valid: false, error: `Path traversal detected: ${name}`, fileCount: 0, episodeCount: 0, subtitleFormats: [] };
     }
 
@@ -195,8 +152,10 @@ export class SystemArchiveInspector implements ArchiveInspector {
   async inspect(_filename: string, bytes: Uint8Array): Promise<ArchiveInspection> {
     const buffer = Buffer.from(bytes);
     const type = detectArchiveType(buffer);
-    const validation = await validateArchiveContents(buffer, this.maxUncompressed);
-    const filenames = validation.valid ? await extractArchiveFilenames(buffer, this.maxUncompressed) : [];
+    let filenames: string[];
+    try { filenames = await extractArchiveFilenames(buffer, this.maxUncompressed); }
+    catch (error) { return { valid: false, error: error instanceof Error ? error.message : String(error), type, filenames: [], subtitleFormats: [], subtitleCount: 0 }; }
+    const validation = validateNames(filenames);
     return {
       valid: validation.valid,
       error: validation.error,

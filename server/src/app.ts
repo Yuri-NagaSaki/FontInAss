@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
+import { HTTPException } from "hono/http-exception";
+import { bodyLimit } from "hono/body-limit";
+import { admission } from "./admission.js";
 import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import { serveStatic } from "hono/bun";
@@ -117,7 +120,11 @@ export function createApp(container: AppContainer) {
       return deleted ? c.json({ ok: true as const }) : c.json({ error: "Font not found" }, 404);
     });
 
-  const subsetRoutes = new Hono().post("/", async (c) => {
+  const subsetLimit = (type: string) => type.includes("multipart/form-data") ? container.config.subsetMaxBatchSize + 1024 * 1024 : container.config.subsetMaxFileSize;
+  const subsetRoutes = new Hono()
+    .use("*", admission(container.config.subsetConcurrency, subsetLimit))
+    .use("*", (c, next) => bodyLimit({ maxSize: subsetLimit(c.req.header("content-type") ?? ""), onError: () => binarySubsetResponse(CODE.CLIENT_ERROR, ["Subtitle exceeds the size limit"], null) })(c, next))
+    .post("/", async (c) => {
     const startedAt = Date.now();
     const options = subsetOptionsFromHeaders(c);
     const maxFiles = container.config.subsetMaxFiles;
@@ -161,8 +168,8 @@ export function createApp(container: AppContainer) {
       }
 
       const results: Array<{ filename: string; code: number; messages: string[]; data: string | null }> = [];
-      for (let offset = 0; offset < entries.length; offset += container.config.subsetConcurrency) {
-        const chunk = entries.slice(offset, offset + container.config.subsetConcurrency);
+      for (let offset = 0; offset < entries.length; offset += 1) {
+        const chunk = entries.slice(offset, offset + 1);
         const loaded = await Promise.all(chunk.map(async (file) => ({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })));
         if (loaded.some((file) => file.bytes.byteLength > maxFileSize)) {
           return tooLarge("A subtitle file exceeds the size limit");
@@ -195,7 +202,7 @@ export function createApp(container: AppContainer) {
       const archive = container.archives.listPublished().find((item) => item.id === c.req.valid("param").id);
       return archive?.download_url ? c.redirect(archive.download_url, 302) : c.json({ error: "Archive not found" }, 404);
     })
-    .post("/contribute", async (c) => {
+    .post("/contribute", admission(2, () => container.config.archiveMaxFileSize + 1024 * 1024), bodyLimit({ maxSize: container.config.archiveMaxFileSize + 1024 * 1024 }), async (c) => {
       try {
         const { file, metadata } = await archiveForm(c);
         const archive = await container.archives.contribute({ filename: file.name, bytes: new Uint8Array(await file.arrayBuffer()), metadata }, hashClientIp(c));
@@ -310,7 +317,7 @@ export function createApp(container: AppContainer) {
       max_batch_bytes: container.config.publicUploadMaxBatchSize,
       requests_per_minute: container.config.publicUploadRequestsPerMinute,
     }))
-    .post("/", async (c) => {
+    .post("/", admission(2, () => container.config.publicUploadMaxBatchSize + 1024 * 1024), bodyLimit({ maxSize: container.config.publicUploadMaxBatchSize + 1024 * 1024 }), async (c) => {
       const contentLength = Number(c.req.header("content-length") ?? 0);
       if (Number.isFinite(contentLength) && contentLength > container.config.publicUploadMaxBatchSize + 1024 * 1024) {
         return c.json({ error: "Upload batch exceeds the public total size limit" }, 413);
@@ -382,6 +389,10 @@ export function createApp(container: AppContainer) {
     .route("/v1", programUpload);
 
   const app = new Hono()
+    .use("/api/*", async (c, next) => {
+      if (!["POST", "PUT", "PATCH"].includes(c.req.method) || c.req.path === "/api/subset") return next();
+      return bodyLimit({ maxSize: Math.max(container.config.publicUploadMaxBatchSize, container.config.archiveMaxFileSize, container.config.subsetMaxBatchSize) + 2 * 1024 * 1024 })(c, next);
+    })
     .use("*", async (c, next) => { const start = Date.now(); await next(); container.logger.debug(`${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - start}ms`); })
     .use("*", cors({ origin: container.config.corsOrigin, allowHeaders: ["*"], allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], exposeHeaders: ["X-Code", "X-Message", "Content-Disposition"] }))
     .use("*", async (c, next) => {
@@ -390,14 +401,18 @@ export function createApp(container: AppContainer) {
     })
     .route("/api", api);
 
-  app.use("/assets/*", serveStatic({ root: "../web/dist" }));
-  app.use("/*", serveStatic({ root: "../web/dist" }));
+  app.use("/assets/*", async (c, next) => { await next(); if (c.res.ok) c.header("Cache-Control", "public, max-age=31536000, immutable"); });
+  app.use("/assets/*", serveStatic({ root: resolve(import.meta.dir, "../../web/dist") }));
+  app.use("/*", serveStatic({ root: resolve(import.meta.dir, "../../web/dist") }));
   app.get("*", async (c) => {
     if (c.req.path.startsWith("/api/")) return c.json({ error: "Not found" }, 404);
     const file = Bun.file(resolve(import.meta.dir, "../../web/dist/index.html"));
     return await file.exists() ? new Response(file, { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=0, s-maxage=300" } }) : c.text("Not found", 404);
   });
-  app.onError((error, c) => { container.logger.error(`[http] ${c.req.method} ${c.req.path}`, error); return c.json({ error: "Internal server error" }, 500); });
+  app.onError((error, c) => {
+    if (error instanceof HTTPException) return error.getResponse();
+    if (error instanceof z.ZodError || error instanceof SyntaxError || (error instanceof TypeError && /form|multipart/i.test(error.message))) return c.json({ error: "Invalid request" }, 400, { "X-Code": "400" });
+    container.logger.error(`[http] ${c.req.method} ${c.req.path}`, error); return c.json({ error: "Internal server error" }, 500); });
   return app;
 }
 
@@ -444,8 +459,17 @@ function subsetOptionsFromHeaders(c: Context): SubsetOptions {
 }
 
 function binarySubsetResponse(code: number, messages: string[], data: Uint8Array | null): Response {
+  const headerMessages: string[] = [];
+  let size = 0;
+  for (const message of messages) {
+    const bytes = Buffer.from(message);
+    const shortened = bytes.length > 1800 ? `${bytes.subarray(0, 1800).toString("utf8")}…` : message;
+    size += Buffer.byteLength(JSON.stringify(shortened));
+    if (size > 3800) { headerMessages.push("Additional messages omitted; see processing history"); break; }
+    headerMessages.push(shortened);
+  }
   return new Response(data ? Buffer.from(data) : null, { status: code >= 500 ? 500 : 200, headers: {
-    "Content-Type": "application/octet-stream", "X-Code": String(code), "X-Message": Buffer.from(JSON.stringify(messages)).toString("base64"),
+    "Content-Type": "application/octet-stream", "X-Code": String(code), "X-Message": Buffer.from(JSON.stringify(headerMessages)).toString("base64"),
   } });
 }
 

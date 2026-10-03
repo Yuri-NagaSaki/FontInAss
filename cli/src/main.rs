@@ -143,24 +143,43 @@ fn is_subtitle(path: &Path) -> bool {
 
 /// Compute output path for a processed file.
 fn output_path(original: &Path, output_dir: &Option<PathBuf>) -> PathBuf {
-    match output_dir {
-        Some(dir) => {
-            let name = original.file_name().unwrap();
-            dir.join(name)
-        }
+    let mut path = match output_dir {
+        Some(dir) => dir.join(original.file_name().unwrap()),
         None => original.to_path_buf(),
+    };
+    if original
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("srt"))
+    {
+        path.set_extension("ass");
     }
+    path
 }
 
 /// Write result data to disk.
 fn write_result(result: &SubsetResult, path: &Path) -> Result<()> {
-    if let Some(data) = &result.data {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(path, data)
-            .with_context(|| format!("Failed to write {}", path.display()))?;
+    use std::io::Write;
+    let data = result
+        .data
+        .as_ref()
+        .filter(|data| !data.is_empty())
+        .context("Server returned no subtitle data")?;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    if let Ok(metadata) = std::fs::metadata(path) {
+        temporary
+            .as_file()
+            .set_permissions(metadata.permissions())?;
     }
+    temporary.write_all(data)?;
+    temporary.as_file().sync_all()?;
+    temporary
+        .persist(path)
+        .with_context(|| format!("Failed to write {}", path.display()))?;
     Ok(())
 }
 
@@ -189,6 +208,17 @@ async fn run_subset(
     let files = resolve_files(&files_patterns, recursive)?;
     if files.is_empty() {
         bail!("No subtitle files found matching the given patterns.");
+    }
+
+    let mut destinations = std::collections::HashSet::new();
+    for file in &files {
+        let target = output_path(file, &output);
+        if !destinations.insert(target.clone()) || (target != *file && files.contains(&target)) {
+            bail!(
+                "Output path collision: {}. Use separate output directories.",
+                target.display()
+            );
+        }
     }
 
     // Validate output dir
@@ -227,7 +257,7 @@ async fn run_subset(
         // Single file: use raw binary mode
         let result = client::subset_single(&client, &server, &files[0], &opts).await?;
         let out = output_path(&files[0], &output);
-        if result.code <= 201 {
+        if result.code == 200 || (result.code == 201 && !strict) {
             write_result(&result, &out)?;
         }
         print_result(&result);
@@ -239,12 +269,19 @@ async fn run_subset(
         for chunk in files.chunks(BATCH_SIZE) {
             let paths: Vec<&Path> = chunk.iter().map(|p| p.as_path()).collect();
 
-            match client::subset_batch(&client, &server, &paths, &opts).await {
+            let response = if paths.len() == 1 {
+                client::subset_single(&client, &server, paths[0], &opts)
+                    .await
+                    .map(|result| vec![result])
+            } else {
+                client::subset_batch(&client, &server, &paths, &opts).await
+            };
+            match response {
                 Ok(results) => {
                     for (i, result) in results.iter().enumerate() {
                         let out = output_path(&chunk[i], &output);
-                        if result.code <= 201 {
-                            let _ = write_result(result, &out);
+                        if result.code == 200 || (result.code == 201 && !strict) {
+                            write_result(result, &out)?;
                         }
                         print_result(result);
                         pb.inc(1);
@@ -306,7 +343,11 @@ fn run_config(action: ConfigAction) -> Result<()> {
                 "  {} {} = {}",
                 Style::new().green().bold().apply_to("✓"),
                 key,
-                dim.apply_to(&value),
+                dim.apply_to(if key == "api-key" || key == "api_key" {
+                    "(saved)"
+                } else {
+                    &value
+                }),
             );
         }
         ConfigAction::Show => {
@@ -319,7 +360,7 @@ fn run_config(action: ConfigAction) -> Result<()> {
                 if cfg.api_key.is_empty() {
                     dim.apply_to("(not set)").to_string()
                 } else {
-                    format!("{}***", &cfg.api_key[..4.min(cfg.api_key.len())])
+                    format!("{}***", cfg.api_key.chars().take(4).collect::<String>())
                 }
             );
         }
