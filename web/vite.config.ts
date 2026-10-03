@@ -18,7 +18,6 @@ export default defineConfig({
         manualChunks(id) {
           if (/[\\/]node_modules[\\/](?:vue|vue-router|vue-i18n)[\\/]/.test(id)) return "vendor-vue";
           if (/[\\/]node_modules[\\/]lucide-vue-next[\\/]/.test(id)) return "vendor-icons";
-          if (/[\\/]node_modules[\\/]@waline[\\/]client[\\/]/.test(id)) return "vendor-waline";
           if (/[\\/]node_modules[\\/]@vueuse[\\/]core[\\/]/.test(id)) return "vendor-utils";
         },
       },
