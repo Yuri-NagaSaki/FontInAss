@@ -45,6 +45,9 @@ fontinass subset --clean file.ass
 # Strict mode: fail if any font is missing
 fontinass subset --strict file.ass
 
+# Disable compatibility aliases and preserve original font names
+fontinass subset --font-name-mode preserve --strict --clean *.ass
+
 # Multi-track MKV: use different alias salts for different subtitle tracks
 fontinass subset --alias-salt SC simple-jp.ass
 fontinass subset --alias-salt TC traditional-jp.ass
@@ -63,18 +66,39 @@ Arguments:
   [FILES]...  Input files or glob patterns (e.g. *.ass, subs/*.ssa)
 
 Options:
-  -r, --recursive          Recursively scan directories
-  -o, --output <DIR>       Output directory (default: overwrite in place)
-  -s, --server <URL>       Server URL (overrides config)
-      --api-key <KEY>      API key (overrides config)
-      --strict             Fail if any font is missing
-      --clean              Remove existing embedded fonts before processing
-      --alias-salt <TEXT>  Extra salt for generated alias names
+  -r, --recursive              Recursively scan directories
+  -o, --output <DIR>           Output directory (default: overwrite in place)
+  -s, --server <URL>           Server URL (overrides config)
+      --api-key <KEY>          API key (overrides config)
+      --strict                Fail if any font is missing
+      --clean                 Remove existing embedded fonts before processing
+      --font-name-mode <MODE>  Font naming mode: alias (default) or preserve
+      --alias-salt <TEXT>      Extra salt for generated alias names
 ```
 
 **Supported formats:** `.ass`, `.ssa`, `.srt`
 
 **Batch processing:** Files are sent in batches of 10 per request for efficiency.
+
+### Font names and compatibility aliases
+
+The CLI defaults to `--font-name-mode alias`. This mode replaces ASS font references
+with generated aliases and writes matching family names into embedded fonts.
+Use `--font-name-mode preserve` to retain the original ASS font names and embedded
+family names, for example when converting to SUP or looking up fonts manually.
+`--strict` and `--clean` do not change the naming mode.
+
+To restore an already processed subtitle, use `--font-name-mode preserve --clean`.
+Keep the `; Font Subset: ALIAS - OriginalFontName` comments: the server needs these
+mappings to restore the names before looking up and subsetting the original fonts.
+The original fonts must still be available on the server. Add `-o ./output/` to
+write the results to a separate directory.
+
+ListAssFonts v190130 recognizes these mapping comments and writes a separate
+`.RemoveFontSubsets.ass` file (or files under `RemoveFontSubsets` when processing a
+directory). Restoring ASS references alone does not rename the font data embedded
+in `[Fonts]`. Reprocess with FontInAss to keep the references and embedded families
+consistent.
 
 ### `fontinass config`
 

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use reqwest::Client;
@@ -14,10 +14,29 @@ pub struct SubsetResult {
     pub data: Option<Vec<u8>>,
 }
 
+/// Naming used for subtitle references and embedded font families.
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum FontNameMode {
+    /// Use compatibility aliases for embedded font matching
+    Alias,
+    /// Preserve original ASS font names
+    Preserve,
+}
+
+impl FontNameMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Alias => "alias",
+            Self::Preserve => "preserve",
+        }
+    }
+}
+
 /// Options controlling how subset is performed.
 pub struct SubsetOpts {
     pub strict: bool,
     pub clean: bool,
+    pub font_name_mode: FontNameMode,
     pub alias_salt: String,
     pub api_key: String,
 }
@@ -81,6 +100,7 @@ pub async fn subset_single(
         .header("Content-Type", "application/octet-stream")
         .header("X-Filename", b64_encode(&filename))
         .header("X-Fonts-Check", if opts.strict { "1" } else { "0" })
+        .header("X-Font-Name-Mode", opts.font_name_mode.as_str())
         .header("X-Clear-Fonts", if opts.clean { "1" } else { "0" });
     if !opts.alias_salt.is_empty() {
         req = req.header("X-Font-Alias-Salt", b64_encode(&opts.alias_salt));
@@ -90,7 +110,10 @@ pub async fn subset_single(
         req = req.header("X-API-Key", &opts.api_key);
     }
 
-    let resp = req.body(body).send().await
+    let resp = req
+        .body(body)
+        .send()
+        .await
         .with_context(|| format!("Request failed for {}", filename))?;
 
     let code: u16 = resp
@@ -107,7 +130,9 @@ pub async fn subset_single(
         .map(decode_messages)
         .unwrap_or_default();
 
-    let data = resp.bytes().await
+    let data = resp
+        .bytes()
+        .await
         .context("Failed to read response body")?
         .to_vec();
 
@@ -139,8 +164,8 @@ pub async fn subset_batch(
             .context("No filename")?
             .to_string_lossy()
             .to_string();
-        let body = std::fs::read(path)
-            .with_context(|| format!("Failed to read {}", path.display()))?;
+        let body =
+            std::fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
         let part = reqwest::multipart::Part::bytes(body)
             .file_name(filename)
             .mime_str("application/octet-stream")?;
@@ -150,6 +175,7 @@ pub async fn subset_batch(
     let mut req = client
         .post(format!("{}/api/subset", server.trim_end_matches('/')))
         .header("X-Fonts-Check", if opts.strict { "1" } else { "0" })
+        .header("X-Font-Name-Mode", opts.font_name_mode.as_str())
         .header("X-Clear-Fonts", if opts.clean { "1" } else { "0" });
     if !opts.alias_salt.is_empty() {
         req = req.header("X-Font-Alias-Salt", b64_encode(&opts.alias_salt));
@@ -168,7 +194,9 @@ pub async fn subset_batch(
         bail!("Server error {}: {}", status, text);
     }
 
-    let batch: BatchResponse = resp.json().await
+    let batch: BatchResponse = resp
+        .json()
+        .await
         .context("Failed to parse batch response")?;
 
     Ok(batch

@@ -81,25 +81,16 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
     }
     if (fontSection > 0) text = removeSection(text, "Fonts");
 
-    const { fontCharMap, subRename, originalNames } = analyseAss(text);
-    if (Object.keys(subRename).length) {
-      for (const [prefix, originalName] of Object.entries(subRename)) {
-        const prefixLower = prefix.toLowerCase();
-        const originalLower = originalName.toLowerCase();
-        for (const key of Object.keys(fontCharMap)) {
-          const [name, ...rest] = key.split("|");
-          if (name !== prefixLower) continue;
-          const nextKey = [originalLower, ...rest].join("|");
-          if (fontCharMap[nextKey]) for (const codepoint of fontCharMap[key]) fontCharMap[nextKey].add(codepoint);
-          else fontCharMap[nextKey] = fontCharMap[key];
-          delete fontCharMap[key];
-        }
-        originalNames[originalLower] ??= originalName;
-        const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        text = text.replace(new RegExp(`(,\\s*|\\\\fn@?)${escaped}[ \\t]*(?=[,\\\\}\\r\\n])`, "gi"), `$1${originalName}`);
-      }
-      text = removeFontSubsetComments(text);
+    let analysis = analyseAss(text);
+    if (Object.keys(analysis.subRename).length) {
+      const originalByAlias = Object.fromEntries(
+        Object.entries(analysis.subRename).map(([alias, original]) => [alias.toLowerCase(), original]),
+      );
+      text = removeFontSubsetComments(renameAssFonts(text, originalByAlias));
+      // Derive font lookup from the restored text so references and embedded names agree.
+      analysis = analyseAss(text);
     }
+    const { fontCharMap, originalNames } = analysis;
 
     const entries = Object.entries(fontCharMap);
     if (!entries.length) return failure(CODE.CLIENT_ERROR, "No fonts referenced in subtitle", 0);

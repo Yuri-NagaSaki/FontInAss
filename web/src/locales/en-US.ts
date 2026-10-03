@@ -290,6 +290,7 @@ export default {
   cliExampleOutput: "Output to a different directory",
   cliExampleRecursive: "Recursively process all subtitles in a directory",
   cliExampleStrict: "Strict mode + remove existing embedded fonts",
+  cliExamplePreserve: "Disable compatibility aliases and preserve original font names",
   cliFeatBatch: "Batch Processing",
   cliFeatBatchDesc: "Glob expansion + 10 files per request for efficient batch processing.",
   cliFeatRecursive: "Recursive Scan",

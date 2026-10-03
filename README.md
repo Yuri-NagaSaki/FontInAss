@@ -171,10 +171,15 @@ fontinass subset *.ass
 # 递归处理目录
 fontinass subset -r ./subs/
 
+# 关闭兼容别名，保留原始字体名
+fontinass subset --font-name-mode preserve --strict --clean *.ass
+
 # 多字幕轨内封时，为不同轨道使用不同别名盐，避免 MKV 字体冲突
 fontinass subset --alias-salt SC simple-jp.ass
 fontinass subset --alias-salt TC traditional-jp.ass
 ```
+
+CLI 默认使用 `--font-name-mode alias`；`preserve` 保留字幕引用和内嵌字体的原始家族名。`--strict` 和 `--clean` 不改变命名模式。还原已生成别名的字幕时，需要保留 `; Font Subset:` 映射注释，并使用 `--font-name-mode preserve --clean` 重新处理；服务端仍需具备对应原始字体。
 
 详细文档见 [cli/README.md](cli/README.md)。
 

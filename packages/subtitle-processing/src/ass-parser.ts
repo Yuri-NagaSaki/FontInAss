@@ -455,10 +455,6 @@ export function removeSection(assText: string, sectionName: string): string {
   return assText.slice(0, startIdx);
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /** Remove previous subset rename comments before writing fresh aliases. */
 export function removeFontSubsetComments(assText: string): string {
   return assText.replace(/^; Font Subset: [^\r\n]*(?:\r?\n)?/gm, "");
@@ -467,19 +463,31 @@ export function removeFontSubsetComments(assText: string): string {
 /**
  * Rename ASS style font names and \fn override tags.
  *
- * `aliasByOriginalLower` maps lowercased original font names to the internal
- * subset family names written into generated fonts.
+ * `replacementByOriginalLower` maps lowercased font names to their replacements.
+ * Used both to assign subset aliases and to restore original names.
  */
 export function renameAssFonts(
   assText: string,
-  aliasByOriginalLower: Record<string, string>,
+  replacementByOriginalLower: Record<string, string>,
 ): string {
-  if (Object.keys(aliasByOriginalLower).length === 0) return assText;
+  if (Object.keys(replacementByOriginalLower).length === 0) return assText;
 
   const tokens = assText.split(/(\r?\n)/);
 
-  let inStyles = false;
+  let section: "styles" | "events" | null = null;
   let fontNameIdx = -1;
+  let eventTextIdx = -1;
+
+  const renameFontName = (raw: string): string => {
+    const name = normalizeFontName(raw).toLowerCase();
+    if (!Object.hasOwn(replacementByOriginalLower, name)) return raw;
+    const replacement = replacementByOriginalLower[name];
+    if (!replacement) return raw;
+    const leading = raw.match(/^\s*/)?.[0] ?? "";
+    const trailing = raw.match(/\s*$/)?.[0] ?? "";
+    const vertical = raw.trim().startsWith("@");
+    return `${leading}${vertical ? "@" : ""}${replacement}${trailing}`;
+  };
 
   const renameStyleLine = (line: string): string => {
     const match = line.match(/^(\s*Style\s*:\s*)(.*)$/i);
@@ -487,54 +495,47 @@ export function renameAssFonts(
     const parts = match[2].split(",");
     if (fontNameIdx >= parts.length) return line;
 
-    const raw = parts[fontNameIdx];
-    const leading = raw.match(/^\s*/)?.[0] ?? "";
-    const trailing = raw.match(/\s*$/)?.[0] ?? "";
-    const trimmed = raw.trim();
-    const vertical = trimmed.startsWith("@");
-    const baseName = normalizeFontName(trimmed);
-    const alias = aliasByOriginalLower[baseName.toLowerCase()];
-    if (!alias) return line;
-
-    parts[fontNameIdx] = `${leading}${vertical ? "@" : ""}${alias}${trailing}`;
+    parts[fontNameIdx] = renameFontName(parts[fontNameIdx]);
     return `${match[1]}${parts.join(",")}`;
+  };
+
+  const renameEventLine = (line: string): string => {
+    const match = line.match(/^(\s*(?:Dialogue|Comment)\s*:\s*)(.*)$/i);
+    if (!match || eventTextIdx < 0) return line;
+    let textStart = 0;
+    for (let column = 0; column < eventTextIdx; column++) {
+      const comma = match[2].indexOf(",", textStart);
+      if (comma === -1) return line;
+      textStart = comma + 1;
+    }
+    const text = match[2].slice(textStart).replace(/\{[^}]*\}/g, (block) =>
+      block.replace(/(\\fn)([^\\}]*)/gi, (_tag, prefix: string, name: string) => `${prefix}${renameFontName(name)}`),
+    );
+    return `${match[1]}${match[2].slice(0, textStart)}${text}`;
   };
 
   for (let i = 0; i < tokens.length; i += 2) {
     const line = tokens[i];
     const trimmed = line.trim();
 
-    if (/^\[V4\+ Styles\]$/i.test(trimmed)) {
-      inStyles = true;
+    if (/^\[[^\]]+\]$/.test(trimmed)) {
+      section = /^\[V4\+ Styles\]$/i.test(trimmed) ? "styles" : /^\[Events\]$/i.test(trimmed) ? "events" : null;
       fontNameIdx = -1;
+      eventTextIdx = -1;
       continue;
     }
-    if (inStyles && /^\[[^\]]+\]$/i.test(trimmed)) {
-      inStyles = false;
-      fontNameIdx = -1;
-    }
-    if (!inStyles) continue;
+    if (!section) continue;
 
     if (/^\s*Format\s*:/i.test(line)) {
-      const cols = line.replace(/^\s*Format\s*:/i, "").replace(/ /g, "").split(",");
-      fontNameIdx = cols.indexOf("Fontname");
+      const cols = line.replace(/^\s*Format\s*:/i, "").split(",").map((column) => column.trim().toLowerCase());
+      if (section === "styles") fontNameIdx = cols.indexOf("fontname");
+      else eventTextIdx = cols.indexOf("text");
       continue;
     }
-    if (/^\s*Style\s*:/i.test(line)) {
-      tokens[i] = renameStyleLine(line);
-    }
+    tokens[i] = section === "styles" ? renameStyleLine(line) : renameEventLine(line);
   }
 
-  let result = tokens.join("");
-
-  for (const [originalLower, alias] of Object.entries(aliasByOriginalLower)) {
-    // The map key is already lowercased. Use case-insensitive replacement
-    // against the lower key; ASS font matching itself is case-insensitive.
-    const escaped = escapeRegExp(originalLower);
-    result = result.replace(new RegExp(`(\\\\fn@?)${escaped}[ \\t]*(?=[\\\\}\\r\\n])`, "gi"), `$1${alias}`);
-  }
-
-  return result;
+  return tokens.join("");
 }
 
 /** Insert subset alias comments before the style section for future reprocessing. */

@@ -290,6 +290,7 @@ export default {
   cliExampleOutput: "输出到指定目录（不覆盖原文件）",
   cliExampleRecursive: "递归处理目录下所有字幕",
   cliExampleStrict: "严格模式 + 清除已有内嵌字体",
+  cliExamplePreserve: "关闭兼容别名，保留原始字体名",
   cliFeatBatch: "批量处理",
   cliFeatBatchDesc: "通配符展开 + 每 10 个文件一次请求，高效处理大量字幕。",
   cliFeatRecursive: "递归扫描",

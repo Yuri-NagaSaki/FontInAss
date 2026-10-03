@@ -36,6 +36,7 @@ const codeExamples = [
   { id: "output",    titleKey: "cliExampleOutput",    code: "fontinass subset -o ./output/ *.ass" },
   { id: "recursive", titleKey: "cliExampleRecursive", code: "fontinass subset -r ./subs/" },
   { id: "strict",    titleKey: "cliExampleStrict",    code: "fontinass subset --strict --clean file.ass" },
+  { id: "preserve",  titleKey: "cliExamplePreserve",  code: "fontinass subset --font-name-mode preserve --strict --clean file.ass" },
 ];
 
 const configCmds = [

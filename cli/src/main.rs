@@ -4,13 +4,13 @@ mod display;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use console::Style;
 use reqwest::Client;
 use walkdir::WalkDir;
 
-use crate::client::{SubsetOpts, SubsetResult};
+use crate::client::{FontNameMode, SubsetOpts, SubsetResult};
 use crate::config::Config;
 use crate::display::{make_progress, print_result, print_summary};
 
@@ -18,7 +18,11 @@ const SUBTITLE_EXTENSIONS: &[&str] = &["ass", "ssa", "srt"];
 const BATCH_SIZE: usize = 10;
 
 #[derive(Parser)]
-#[command(name = "fontinass", version, about = "FontInAss CLI — embed fonts into subtitle files")]
+#[command(
+    name = "fontinass",
+    version,
+    about = "FontInAss CLI — embed fonts into subtitle files"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -54,6 +58,10 @@ enum Commands {
         /// Remove existing embedded fonts before processing
         #[arg(long)]
         clean: bool,
+
+        /// Font naming mode (preserve disables compatibility aliases)
+        #[arg(long, value_enum, default_value = "alias")]
+        font_name_mode: FontNameMode,
 
         /// Extra salt for generated alias names (use different values per MKV subtitle track)
         #[arg(long)]
@@ -164,6 +172,7 @@ async fn run_subset(
     api_key_override: Option<String>,
     strict: bool,
     clean: bool,
+    font_name_mode: FontNameMode,
     alias_salt: Option<String>,
 ) -> Result<()> {
     let dim = Style::new().dim();
@@ -202,7 +211,13 @@ async fn run_subset(
     let opts = SubsetOpts {
         strict,
         clean,
-        alias_salt: alias_salt.unwrap_or_default().trim().chars().take(80).collect(),
+        font_name_mode,
+        alias_salt: alias_salt
+            .unwrap_or_default()
+            .trim()
+            .chars()
+            .take(80)
+            .collect(),
         api_key,
     };
 
@@ -210,8 +225,7 @@ async fn run_subset(
 
     if files.len() == 1 {
         // Single file: use raw binary mode
-        let result =
-            client::subset_single(&client, &server, &files[0], &opts).await?;
+        let result = client::subset_single(&client, &server, &files[0], &opts).await?;
         let out = output_path(&files[0], &output);
         if result.code <= 201 {
             write_result(&result, &out)?;
@@ -240,11 +254,7 @@ async fn run_subset(
                 Err(e) => {
                     pb.suspend(|| {
                         let err_style = Style::new().red().bold();
-                        eprintln!(
-                            "  {} Batch error: {}",
-                            err_style.apply_to("✗"),
-                            e
-                        );
+                        eprintln!("  {} Batch error: {}", err_style.apply_to("✗"), e);
                     });
                     // Mark all files in this chunk as failed
                     for path in chunk {
@@ -330,8 +340,22 @@ async fn main() {
             api_key,
             strict,
             clean,
+            font_name_mode,
             alias_salt,
-        } => run_subset(files, recursive, output, server, api_key, strict, clean, alias_salt).await,
+        } => {
+            run_subset(
+                files,
+                recursive,
+                output,
+                server,
+                api_key,
+                strict,
+                clean,
+                font_name_mode,
+                alias_salt,
+            )
+            .await
+        }
         Commands::Config { action } => run_config(action),
     };
 
