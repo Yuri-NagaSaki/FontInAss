@@ -1,0 +1,307 @@
+{
+  "method": "Median of 3 per-round medians/p95/throughput values; warm filesystem, uncached results use unique salts",
+  "workloads": {
+    "subset-uncached": {
+      "before": {
+        "medianMs": 209.94344899999987,
+        "p95Ms": 379.46788300000026,
+        "rps": 4.689419862518105,
+        "requestCount": 105,
+        "medianMsRange": [
+          209.00762800000007,
+          221.798088
+        ]
+      },
+      "runtime-only": {
+        "medianMs": 207.84110499999997,
+        "p95Ms": 361.73480100000006,
+        "rps": 4.943789370521705,
+        "requestCount": 105,
+        "medianMsRange": [
+          200.73518299999978,
+          215.8434970000003
+        ]
+      },
+      "optimized": {
+        "medianMs": 12.452376000000072,
+        "p95Ms": 29.634682999999995,
+        "rps": 59.91057754043238,
+        "requestCount": 105,
+        "medianMsRange": [
+          12.220857999999964,
+          12.768827999999985
+        ]
+      },
+      "latencyReductionPercent": 94.06869990022881,
+      "runtimeOnlyLatencyReductionPercent": 1.0013858541496612,
+      "throughputMultiplier": 12.775690660435307
+    },
+    "subset-concurrent": {
+      "before": {
+        "medianMs": 223.2840129999986,
+        "p95Ms": 394.29702,
+        "rps": 8.681879039685555,
+        "requestCount": 126,
+        "medianMsRange": [
+          215.37024800000108,
+          223.86512799999946
+        ]
+      },
+      "runtime-only": {
+        "medianMs": 210.15616600000067,
+        "p95Ms": 373.327358999999,
+        "rps": 9.194934920358902,
+        "requestCount": 126,
+        "medianMsRange": [
+          205.38066000000072,
+          213.62478399999964
+        ]
+      },
+      "optimized": {
+        "medianMs": 18.980636999999888,
+        "p95Ms": 35.77448199999981,
+        "rps": 82.52802908294035,
+        "requestCount": 126,
+        "medianMsRange": [
+          14.14695800000004,
+          21.14446399999997
+        ]
+      },
+      "latencyReductionPercent": 91.49933004831833,
+      "runtimeOnlyLatencyReductionPercent": 5.879438847239815,
+      "throughputMultiplier": 9.505779648126657
+    },
+    "subset-cached": {
+      "before": {
+        "medianMs": 0.4713690000007773,
+        "p95Ms": 1.4758810000002995,
+        "rps": 2566.1834976540686,
+        "requestCount": 900,
+        "medianMsRange": [
+          0.44325300000127754,
+          0.6992129999998724
+        ]
+      },
+      "runtime-only": {
+        "medianMs": 0.5569720000003144,
+        "p95Ms": 1.612606999999116,
+        "rps": 2305.8070798238286,
+        "requestCount": 900,
+        "medianMsRange": [
+          0.4571640000012849,
+          0.7548429999988002
+        ]
+      },
+      "optimized": {
+        "medianMs": 0.3450909999999112,
+        "p95Ms": 1.4272820000001047,
+        "rps": 3068.8595304737,
+        "requestCount": 900,
+        "medianMsRange": [
+          0.2807900000000245,
+          0.3839210000001003
+        ]
+      },
+      "latencyReductionPercent": 26.789627659149808,
+      "runtimeOnlyLatencyReductionPercent": -18.16050694878024,
+      "throughputMultiplier": 1.1958846798286886
+    },
+    "health": {
+      "before": {
+        "medianMs": 0.25028300000121817,
+        "p95Ms": 1.146733999999924,
+        "rps": 10646.934801769892,
+        "requestCount": 1500,
+        "medianMsRange": [
+          0.22568200000023353,
+          0.2639530000014929
+        ]
+      },
+      "runtime-only": {
+        "medianMs": 0.25175299999864365,
+        "p95Ms": 1.1125630000005913,
+        "rps": 10446.14634453491,
+        "requestCount": 1500,
+        "medianMsRange": [
+          0.22818700000061654,
+          0.30274399999871093
+        ]
+      },
+      "optimized": {
+        "medianMs": 0.2545079999999871,
+        "p95Ms": 1.1812979999999698,
+        "rps": 10360.345025182995,
+        "requestCount": 1500,
+        "medianMsRange": [
+          0.22339899999997215,
+          0.2671179999999822
+        ]
+      },
+      "latencyReductionPercent": -1.6880890826577621,
+      "runtimeOnlyLatencyReductionPercent": -0.5873351355938361,
+      "throughputMultiplier": 0.9730824146176553
+    },
+    "font-list": {
+      "before": {
+        "medianMs": 2445.0104950000023,
+        "p95Ms": 3028.0765699999974,
+        "rps": 1.6127767782867306,
+        "requestCount": 240,
+        "medianMsRange": [
+          2438.7233380000034,
+          2496.416602999998
+        ]
+      },
+      "runtime-only": {
+        "medianMs": 2399.230884999997,
+        "p95Ms": 2782.6111710000005,
+        "rps": 1.6573930682149955,
+        "requestCount": 240,
+        "medianMsRange": [
+          2310.246998999999,
+          2497.353194000003
+        ]
+      },
+      "optimized": {
+        "medianMs": 5.459595000000036,
+        "p95Ms": 11.277962000000116,
+        "rps": 596.4878571289295,
+        "requestCount": 240,
+        "medianMsRange": [
+          4.909051999999974,
+          7.481176000000005
+        ]
+      },
+      "latencyReductionPercent": 99.77670463946208,
+      "runtimeOnlyLatencyReductionPercent": 1.8723686500987768,
+      "throughputMultiplier": 369.8514668363372
+    },
+    "archives": {
+      "before": {
+        "medianMs": 8.898205000004964,
+        "p95Ms": 17.67793199999869,
+        "rps": 370.6003707940122,
+        "requestCount": 240,
+        "medianMsRange": [
+          8.14006099999824,
+          8.914297999996052
+        ]
+      },
+      "runtime-only": {
+        "medianMs": 8.50097800000367,
+        "p95Ms": 16.874673999998777,
+        "rps": 375.29979944869797,
+        "requestCount": 240,
+        "medianMsRange": [
+          7.997054999999818,
+          9.688138999998046
+        ]
+      },
+      "optimized": {
+        "medianMs": 4.776485000000093,
+        "p95Ms": 9.893671999999924,
+        "rps": 707.3636869280833,
+        "requestCount": 240,
+        "medianMsRange": [
+          4.548170000000027,
+          4.899696999999833
+        ]
+      },
+      "latencyReductionPercent": 46.32080290353584,
+      "runtimeOnlyLatencyReductionPercent": 4.464125067933056,
+      "throughputMultiplier": 1.908696651901764
+    },
+    "activity-stats": {
+      "before": {
+        "medianMs": 10.464815000006638,
+        "p95Ms": 15.880658999994921,
+        "rps": 171.01914378035195,
+        "requestCount": 120,
+        "medianMsRange": [
+          9.822699999996985,
+          10.983782000010251
+        ]
+      },
+      "runtime-only": {
+        "medianMs": 10.022930999999517,
+        "p95Ms": 16.36157500000263,
+        "rps": 178.45846277111303,
+        "requestCount": 120,
+        "medianMsRange": [
+          9.076100999998744,
+          10.540785999997752
+        ]
+      },
+      "optimized": {
+        "medianMs": 0.23498799999993025,
+        "p95Ms": 1.5461990000001151,
+        "rps": 3056.0075263353597,
+        "requestCount": 120,
+        "medianMsRange": [
+          0.21860300000003008,
+          0.2446540000000823
+        ]
+      },
+      "latencyReductionPercent": 97.75449446550387,
+      "runtimeOnlyLatencyReductionPercent": 4.222568674236871,
+      "throughputMultiplier": 17.869388530329307
+    },
+    "font-stats": {
+      "before": {
+        "medianMs": 0.29578300000866875,
+        "p95Ms": 1.1853039999987232,
+        "rps": 394.05827893391006,
+        "requestCount": 60,
+        "medianMsRange": [
+          0.2750010000017937,
+          0.3718220000009751
+        ]
+      },
+      "runtime-only": {
+        "medianMs": 0.3783610000027693,
+        "p95Ms": 1.7390509999968344,
+        "rps": 369.6854664295728,
+        "requestCount": 60,
+        "medianMsRange": [
+          0.27292799999850104,
+          0.4358319999955711
+        ]
+      },
+      "optimized": {
+        "medianMs": 0.43734599999993407,
+        "p95Ms": 2.549919999999929,
+        "rps": 368.48262025927744,
+        "requestCount": 60,
+        "medianMsRange": [
+          0.28936399999997775,
+          0.5573429999999462
+        ]
+      },
+      "latencyReductionPercent": -47.86042469888954,
+      "runtimeOnlyLatencyReductionPercent": -27.918440205042327,
+      "throughputMultiplier": 0.9350967609567161
+    }
+  },
+  "resources": {
+    "before": {
+      "cpuSeconds": 69.451491,
+      "elapsedSeconds": 64.68851221911609,
+      "peakAnonymousBytes": 280580096,
+      "peakCgroupBytes": 330809344
+    },
+    "runtime-only": {
+      "cpuSeconds": 67.267692,
+      "elapsedSeconds": 62.5410417933017,
+      "peakAnonymousBytes": 300306432,
+      "peakCgroupBytes": 374726656
+    },
+    "optimized": {
+      "cpuSeconds": 2.555136,
+      "elapsedSeconds": 2.1516733802855015,
+      "peakAnonymousBytes": 100331520,
+      "peakCgroupBytes": 117706752
+    }
+  },
+  "byteIdenticalSubtitleResponses": 1131,
+  "totalRequests": 9873
+}

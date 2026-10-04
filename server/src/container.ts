@@ -12,7 +12,7 @@ import {
   SqliteUploadAccessRepository,
 } from "@fontinass/persistence";
 import { FsFontFileStore, FsPendingArchiveStore, R2PublishedArchiveStore } from "@fontinass/storage";
-import { DefaultSubtitleProcessor, OpenTypeFontInspector, type SubtitleProcessor } from "@fontinass/subtitle-processing";
+import { DefaultSubtitleProcessor, NativeFontSubsetter, OpenTypeFontInspector, type SubtitleProcessor } from "@fontinass/subtitle-processing";
 import { loadRuntimeConfig, RuntimeLogger, type RuntimeConfig } from "./runtime.js";
 
 export interface AppContainer {
@@ -63,7 +63,9 @@ export function createContainer(config = loadRuntimeConfig()): AppContainer {
     concurrency: config.subsetConcurrency,
   });
   const activity = new ActivityLog(new SqliteActivityRepository(database));
+  const nativeSubsetter = new NativeFontSubsetter(config.subsetConcurrency);
   const subtitles = new DefaultSubtitleProcessor(fonts, logger, {
+    subset: (input, variants) => nativeSubsetter.subset(input, variants),
     cacheEntries: config.cacheMaxEntries,
     cacheBytes: config.cacheMaxBytes,
     cacheTtlMs: config.cacheTtlMs,
@@ -156,6 +158,7 @@ export function createContainer(config = loadRuntimeConfig()): AppContainer {
       };
     },
     close() {
+      nativeSubsetter.close();
       if (interval) clearInterval(interval);
       interval = null;
       schedulerEnabled = false;

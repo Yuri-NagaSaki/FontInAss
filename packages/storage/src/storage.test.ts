@@ -15,6 +15,8 @@ test("font store atomically replaces files and rejects symlink escapes", async (
     await writeFile(join(dir,"outside.ttf"), "outside");
     await symlink(dir, join(dir,"fonts","escape"));
     expect(await store.get("escape/outside.ttf")).toBeNull();
+    expect(store.localPath("escape/outside.ttf")).toBeNull();
+    expect(store.localPath("nested/font.ttf")).toBe(join(dir, "fonts", "nested/font.ttf"));
     await expect(store.put("escape/outside.ttf", new Uint8Array([0]))).rejects.toThrow();
     expect((await readFile(join(dir,"outside.ttf"))).toString()).toBe("outside");
     await expect(store.put("../outside.ttf", new Uint8Array([0]))).rejects.toThrow();

@@ -8,7 +8,7 @@ import { createApp } from "./app.js";
 import { createContainer } from "./container.js";
 import type { RuntimeConfig } from "./runtime.js";
 
-function fixtureFont(): Uint8Array {
+function fixtureFont(): Uint8Array<ArrayBuffer> {
   const path = new opentype.Path();
   path.moveTo(80, 0); path.lineTo(300, 700); path.lineTo(520, 0); path.close();
   const font = new opentype.Font({

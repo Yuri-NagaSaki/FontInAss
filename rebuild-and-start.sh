@@ -18,7 +18,7 @@ docker compose build
 
 if [ -n "$previous" ]; then
   docker tag "$previous" fontinass-local:rollback
-  docker exec fontinass-local bun -e 'import { Database } from "bun:sqlite"; import { mkdirSync } from "node:fs"; const dir="/app/data/backups";mkdirSync(dir,{recursive:true});const path=dir+"/fontinass-"+Date.now()+".db";const db=new Database(process.env.DB_PATH);db.run("VACUUM INTO ?",[path]);db.close();console.log("Backup: "+path);'
+  docker exec fontinass-local bun -e 'import { Database } from "bun:sqlite"; import { mkdirSync, chmodSync } from "node:fs"; const dir="/app/data/backups";mkdirSync(dir,{recursive:true});const path=dir+"/fontinass-"+Date.now()+".db";const db=new Database(process.env.DB_PATH);db.run("VACUUM INTO ?",[path]);db.close();chmodSync(path,0o600);console.log("Backup: "+path);'
 fi
 
 healthy() {
@@ -35,10 +35,15 @@ healthy() {
   return 1
 }
 
-if docker compose up -d --no-build --force-recreate && healthy; then
+matches_build() {
+  local actual runtime
   actual="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' fontinass-local)"
-  [ "$actual" = "$BUILD_REVISION" ] || { echo "Running revision mismatch" >&2; exit 1; }
-  echo "Healthy: $actual — http://localhost:3300"
+  runtime="$(docker exec fontinass-local bun --version)"
+  [ "$actual" = "$BUILD_REVISION" ] && [ "$runtime" = "$(cat .bun-version)" ]
+}
+
+if docker compose up -d --no-build --force-recreate && healthy && matches_build; then
+  echo "Healthy: $BUILD_REVISION, Bun $(cat .bun-version) — http://localhost:3300"
   docker compose ps
 else
   docker compose logs --tail=60

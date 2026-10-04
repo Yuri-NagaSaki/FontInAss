@@ -1,0 +1,1 @@
+{"image":"fontinass-perf:bun-1.4.2","imageId":"sha256:0fffa6dfec5062481b99258214c329fe52faf128126fa9f0fb94a2265d7e0c16","bun":"1.4.2","fontTools":"4.62.1","harfbuzz":"hb-subset (HarfBuzz) 10.2.0\nAvailable shapers: graphite2,ot,fallback","elapsedSeconds":61.09839301556349,"cpuSeconds":65.860675,"peakAnonymousBytes":300306432,"peakCgroupBytes":374726656,"sampleCount":2385}

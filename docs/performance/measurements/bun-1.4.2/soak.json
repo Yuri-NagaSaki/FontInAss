@@ -1,0 +1,12 @@
+{
+  "requests": 1000,
+  "concurrency": 2,
+  "errors": 0,
+  "elapsedSeconds": 12.209972098469734,
+  "medianMs": 22.456087172031403,
+  "p95Ms": 27.94836089015007,
+  "peakAnonymousBytes": 70393856,
+  "peakPids": 22,
+  "lastAnonymousBytes": 64950272,
+  "sampleCount": 475
+}

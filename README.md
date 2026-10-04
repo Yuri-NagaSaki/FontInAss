@@ -187,7 +187,7 @@ CLI 默认使用 `--font-name-mode alias`；`preserve` 保留字幕引用和内�
 
 ## 开发与验证
 
-需要 Bun 1.4.0、Python 3（安装 FontTools 4.62.1）、HarfBuzz CLI（`hb-subset`）和 7z。Docker 镜像已包含这些依赖：
+需要 Bun 1.4.2、Python 3（安装 FontTools 4.62.1）、HarfBuzz CLI（`hb-subset`）和 7z。Docker 镜像已包含这些依赖：
 
 ```bash
 bun install --frozen-lockfile
@@ -208,7 +208,7 @@ bun run data:reindex   # 从 FONT_DIR 重建 v2 SQLite 字体索引
 
 ## 审计与性能复查
 
-完整记录见 [2026-10-04 项目审计](docs/audits/2026-10-04-project-audit.md)。
+完整记录见 [2026-10-04 项目审计](docs/audits/2026-10-04-project-audit.md) 和 [Bun 1.4.2 升级与性能基线](docs/performance/2026-10-04-bun-1.4.2.md)。
 
 ```bash
 bun scripts/benchmark-subset.ts http://127.0.0.1:3300 /tmp/fontinass-benchmark
@@ -216,7 +216,17 @@ python3 scripts/verify-shaping.py /tmp/fontinass-benchmark
 python3 scripts/benchmark-lookup.py data/fontinass-v2.db
 ```
 
-子集化基准使用合成字幕，会产生正常处理日志；字形对比脚本需要本地生产字体库及 `hb-shape`。冷处理隔离在有 CPU、内存和时间限制的子进程中，可能比旧实现耗时更长；服务主线程可继续响应其他请求。
+子集化基准使用合成字幕，会产生正常处理日志；字形对比脚本需要本地生产字体库及 `hb-shape`。原生工作进程按全局并发数复用，每处理 64 个字体任务或空闲 30 秒后回收；保留内存、CPU、超时和输出限制。结果缓存未命中也可复用已加载的 Python 模块，但刚启动或空闲后的首个请求仍包含初始化耗时。
+
+完整负载测试使用独立数据库副本，字体目录只读挂载，避免影响生产数据：
+
+```bash
+# SNAPSHOT_DB 是通过 SQLite backup 或 VACUUM INTO 生成的一致性副本。
+BENCHMARK_BUN=/path/to/fixed/bun python3 scripts/run-performance.py IMAGE SNAPSHOT_DB /tmp/fontinass-perf 1
+# 重复时将末尾轮次改为 2、3；A/B/C 对照应使用相同的负载生成器版本。
+```
+
+`scripts/benchmark-build.py` 测量类型检查和构建；`scripts/summarize-performance.py` 汇总三轮 A/B/C 结果，并校验字幕输出逐字节一致。报告保留原始请求样本和资源采样汇总，不能将微基准结果等同于生产容量承诺。
 
 ## API 与设计文档
 

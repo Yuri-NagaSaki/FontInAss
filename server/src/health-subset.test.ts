@@ -39,7 +39,7 @@ describe("health and subset limits", () => {
     let entered!: () => void;
     const waiting = new Promise<void>(resolve => { release = resolve; });
     const started = new Promise<void>(resolve => { entered = resolve; });
-    container.subtitles = { async process() { entered(); await waiting; return { code: 200, messages: [], data: new Uint8Array([1]) }; } };
+    container.subtitles = { async process() { entered(); await waiting; return { code: 200, messages: [], data: new Uint8Array([1]), fontCount: 0 }; } };
     const app = createApp(container);
     try {
       const first = app.request("/api/subset", { method: "POST", body: "A" });

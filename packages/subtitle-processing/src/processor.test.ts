@@ -41,7 +41,7 @@ function source(onLoad: () => void): FontSource {
     },
     async load() {
       onLoad();
-      return { bytes, resolvedKey: "fixture.ttf" };
+      return { data: bytes, resolvedKey: "fixture.ttf" };
     },
   };
 }

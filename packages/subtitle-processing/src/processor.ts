@@ -14,7 +14,7 @@ import {
   renameAssFonts,
   srtToAss,
 } from "./ass-parser.js";
-import { subsetFontVariants, type FontSubsetVariant } from "./native-subsetter.js";
+import { subsetFontVariants, type FontSubsetVariant, type FontInput, type FontSubsetResult } from "./native-subsetter.js";
 
 export interface FontSourceMatchRequest {
   key: string;
@@ -31,7 +31,7 @@ export interface FontSourceMatch {
 export interface FontSource {
   readonly revision?: number;
   match(requests: FontSourceMatchRequest[]): Map<string, FontSourceMatch | null>;
-  load(key: string): Promise<{ bytes: Uint8Array; resolvedKey: string } | null>;
+  load(key: string): Promise<{ data: FontInput; resolvedKey: string } | null>;
 }
 
 export interface ProcessingLogger {
@@ -46,6 +46,7 @@ export interface SubtitleProcessor {
 }
 
 export interface SubtitleProcessorOptions {
+  subset?: (input: FontInput, variants: FontSubsetVariant[]) => Promise<FontSubsetResult[]>;
   cacheEntries?: number;
   cacheBytes?: number;
   cacheTtlMs?: number;
@@ -53,6 +54,7 @@ export interface SubtitleProcessorOptions {
 
 export class DefaultSubtitleProcessor implements SubtitleProcessor {
   private readonly cache: ResultCache;
+  private readonly subset: NonNullable<SubtitleProcessorOptions["subset"]>;
   private readonly inFlight = new Map<string, Promise<SubsetResult>>();
 
   constructor(
@@ -60,6 +62,7 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
     private readonly logger: ProcessingLogger,
     options: SubtitleProcessorOptions = {},
   ) {
+    this.subset = options.subset ?? subsetFontVariants;
     this.cache = new ResultCache(options.cacheEntries ?? 500, options.cacheBytes ?? 256 * 1024 * 1024, options.cacheTtlMs ?? 48 * 60 * 60 * 1000);
   }
 
@@ -172,7 +175,7 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
           unicodes: new Set(group.flatMap(v => [...v.unicodeSet])),
         };
       });
-      const subsetResults = await subsetFontVariants(loaded.bytes, specifications);
+      const subsetResults = await this.subset(loaded.data, specifications);
       encodedBytes += subsetResults.reduce((total, result) => total + result.encoded.length, 0);
       if (encodedBytes > 64 * 1024 * 1024) return failure(CODE.CLIENT_ERROR, "Embedded fonts exceed the 64 MiB budget");
       batches.forEach((group, index) => {

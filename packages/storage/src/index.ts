@@ -33,6 +33,10 @@ export class FsFontFileStore implements FontFileStore {
     return path;
   }
 
+  localPath(key: string): string | null {
+    try { const path = this.path(key); return statSync(path).isFile() ? path : null; } catch { return null; }
+  }
+
   async get(key: string): Promise<Uint8Array | null> {
     try { return new Uint8Array(await readFile(this.path(key))); } catch { return null; }
   }

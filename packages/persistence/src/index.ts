@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS font_files (
   sha256 TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 );
+CREATE INDEX IF NOT EXISTS idx_font_files_created ON font_files(created_at DESC, id);
 CREATE INDEX IF NOT EXISTS idx_font_files_sha256 ON font_files(sha256) WHERE sha256 IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS font_faces (
@@ -64,6 +65,7 @@ CREATE TABLE IF NOT EXISTS font_names (
   PRIMARY KEY(name_lower, face_id)
 );
 CREATE INDEX IF NOT EXISTS idx_font_names_lower ON font_names(name_lower);
+CREATE INDEX IF NOT EXISTS idx_font_names_face ON font_names(face_id);
 
 CREATE TABLE IF NOT EXISTS archives (
   id TEXT PRIMARY KEY,
@@ -387,20 +389,29 @@ export class SqliteFontCatalogRepository implements FontCatalogRepository {
   listFiles(query: { page: number; limit: number; search: string }) {
     const offset = (query.page - 1) * query.limit;
     const pattern = `%${query.search.toLowerCase()}%`;
-    const where = query.search ? "WHERE lower(ff.filename) LIKE ? OR n.name_lower LIKE ?" : "";
+    const where = query.search ? `WHERE lower(ff.filename) LIKE ? OR EXISTS (
+      SELECT 1 FROM font_faces sf JOIN font_names sn ON sn.face_id = sf.id
+      WHERE sf.file_id = ff.id AND sn.name_lower LIKE ?
+    )` : "";
     const parameters: SQLQueryBindings[] = query.search ? [pattern, pattern] : [];
     const total = this.database.raw.query<{ count: number }, SQLQueryBindings[]>(`
-      SELECT COUNT(DISTINCT ff.id) AS count FROM font_files ff
-      LEFT JOIN font_faces f ON f.file_id = ff.id LEFT JOIN font_names n ON n.face_id = f.id ${where}
+      SELECT COUNT(*) AS count FROM font_files ff ${where}
     `).get(...parameters)?.count ?? 0;
+    // Select a page before joining faces/names. The old query grouped all 31k
+    // files and 110k names for every page and also returned incomplete aliases
+    // when a name filter was applied to the aggregation itself.
     const rows = this.database.raw.query<{
       id: string; filename: string; size: number; created_at: string; names_json: string; weight: number | null; bold: number | null; italic: number | null;
     }, SQLQueryBindings[]>(`
+      WITH page AS MATERIALIZED (
+        SELECT ff.id, ff.filename, ff.size, ff.created_at FROM font_files ff
+        ${where} ORDER BY ff.created_at DESC, ff.id LIMIT ? OFFSET ?
+      )
       SELECT ff.id, ff.filename, ff.size, ff.created_at,
         json_group_array(DISTINCT n.name_lower) AS names_json,
         COALESCE(MIN(f.weight), 400) AS weight, COALESCE(MAX(f.bold), 0) AS bold, COALESCE(MAX(f.italic), 0) AS italic
-      FROM font_files ff LEFT JOIN font_faces f ON f.file_id = ff.id LEFT JOIN font_names n ON n.face_id = f.id
-      ${where} GROUP BY ff.id ORDER BY ff.created_at DESC LIMIT ? OFFSET ?
+      FROM page ff LEFT JOIN font_faces f ON f.file_id = ff.id LEFT JOIN font_names n ON n.face_id = f.id
+      GROUP BY ff.id ORDER BY ff.created_at DESC, ff.id
     `).all(...parameters, query.limit, offset);
     return {
       total, page: query.page, limit: query.limit,

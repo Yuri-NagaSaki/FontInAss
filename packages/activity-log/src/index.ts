@@ -22,10 +22,12 @@ export interface ActivityRepository {
 }
 
 export class ActivityLog {
+  private cachedStats: { day: string; expiresAt: number; value: LogStats } | null = null;
   constructor(private readonly repository: ActivityRepository) {}
 
   record(input: ProcessingEventInput): void {
     this.repository.insert(input);
+    this.cachedStats = null;
   }
 
   list(query: { page?: number; limit?: number; search?: string; code?: number }): ProcessingLogList {
@@ -43,8 +45,14 @@ export class ActivityLog {
 
   resolve(name: string): void { this.repository.resolveFont(name); }
   unresolve(name: string): void { this.repository.unresolveFont(name); }
-  stats(): LogStats { return this.repository.stats(new Date().toISOString().slice(0, 10)); }
-  prune(cutoffIso: string): number { return this.repository.prune(cutoffIso); }
+  stats(): LogStats {
+    const day = new Date().toISOString().slice(0, 10);
+    if (this.cachedStats?.day === day && this.cachedStats.expiresAt > Date.now()) return this.cachedStats.value;
+    const value = this.repository.stats(day);
+    this.cachedStats = { day, value, expiresAt: Date.now() + 1000 };
+    return value;
+  }
+  prune(cutoffIso: string): number { this.cachedStats = null; return this.repository.prune(cutoffIso); }
 }
 
 export type { ProcessingLog };

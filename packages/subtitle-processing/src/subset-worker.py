@@ -5,7 +5,7 @@ import resource
 import subprocess
 import sys
 
-# Each request runs in a disposable process with a memory/CPU/output budget.
+# A worker is recycled after 64 jobs; these are lifetime resource ceilings.
 resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 * 1024,) * 2)
 resource.setrlimit(resource.RLIMIT_CPU, (30, 30))
 resource.setrlimit(resource.RLIMIT_FSIZE, (128 * 1024 * 1024,) * 2)
@@ -36,15 +36,11 @@ def rename(font, family, ps_name, alias):
         cff.topDictIndex[0].FullName = ps_name
 
 
-def main():
-    request = json.load(sys.stdin)
+def subset(request):
     results = []
     for index, variant in enumerate(request["variants"]):
         try:
             face = variant["faceIndex"]
-            with TTFont(request["font"], fontNumber=face, lazy=True) as source:
-                cmap = source.getBestCmap() or {}
-                missing = [cp for cp in variant["unicodes"] if not cmap.get(cp) or cmap[cp] == ".notdef"]
             output = os.path.join(request["directory"], f"{index}.sfnt")
             unicode_file = os.path.join(request["directory"], f"{index}.unicodes")
             with open(unicode_file, "w", encoding="ascii") as stream:
@@ -55,15 +51,23 @@ def main():
                 "--layout-features=*", "--layout-scripts=*", "--name-IDs=*",
                 "--name-languages=*", "--name-legacy", "--notdef-outline",
             ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=20)
-            with TTFont(output, recalcTimestamp=False) as font:
+            with TTFont(output, lazy=True, recalcTimestamp=False) as font:
+                # HarfBuzz's resulting cmap retains all requested mappings. Reading
+                # the small subset avoids decompiling the full CJK source cmap.
+                cmap = font.getBestCmap() or {}
+                missing = [cp for cp in variant["unicodes"] if not cmap.get(cp) or cmap[cp] == ".notdef"]
                 rename(font, variant["outputName"], variant["postScriptName"], variant["alias"])
-                font.save(output, reorderTables=False)
+                font.save(output + ".renamed", reorderTables=False)
                 extension = "otf" if font.sfntVersion == "OTTO" else "ttf"
+            os.replace(output + ".renamed", output)
             results.append({"path": output, "extension": extension, "missing": missing})
         except Exception as error:
             results.append({"error": f"{type(error).__name__}: {error}"[:500]})
-    json.dump(results, sys.stdout)
+    return results
 
 
 if __name__ == "__main__":
-    main()
+    for line in sys.stdin:
+        request = json.loads(line)
+        result = subset(request)
+        print(json.dumps(result), flush=True)

@@ -80,6 +80,7 @@ export interface FontFileStore {
   put(key: string, bytes: Uint8Array): Promise<void>;
   delete(key: string): Promise<void>;
   exists(key: string): boolean;
+  localPath?(key: string): string | null;
   browse(prefix: string): { folders: string[]; files: FontFileObject[] };
   list(prefix?: string): FontFileObject[];
   /** Count font files under a prefix (optional for lightweight stores). */
@@ -206,9 +207,13 @@ export class FontCatalog {
     return result;
   }
 
-  async load(key: string): Promise<{ bytes: Uint8Array; resolvedKey: string } | null> {
+  async load(key: string): Promise<{ data: Uint8Array | { path: string }; resolvedKey: string } | null> {
+    if (this.files.localPath) {
+      const path = this.files.localPath(key);
+      return path ? { data: { path }, resolvedKey: key } : null;
+    }
     const bytes = await this.files.get(key);
-    return bytes ? { bytes, resolvedKey: key } : null;
+    return bytes ? { data: bytes, resolvedKey: key } : null;
   }
 
   async index(filename: string, bytes: Uint8Array, existingKey?: string, sha256?: string): Promise<UploadResult> {

@@ -52,6 +52,25 @@ describe("SqliteDatabase migrations", () => {
 });
 
 describe("SqliteFontCatalogRepository", () => {
+  test("paginates files before aggregating every matching file's aliases", () => {
+    const directory = mkdtempSync(join(tmpdir(), "fontinass-page-"));
+    directories.push(directory);
+    const database = new SqliteDatabase(join(directory, "fonts.db"));
+    const fonts = new SqliteFontCatalogRepository(database);
+    for (const id of ["a", "b", "c"]) {
+      fonts.insertFile({ id, filename: `${id}.ttf`, key: `${id}.ttf`, size: 10, sha256: id }, [
+        { index: 0, familyNames: ["Shared", `Alias ${id}`], weight: 400, bold: false, italic: false },
+      ]);
+    }
+    const page = fonts.listFiles({ search: "alias b", page: 1, limit: 1 });
+    expect(page.total).toBe(1);
+    expect(page.data[0].names.sort()).toEqual(["alias b", "shared"]);
+    const first = fonts.listFiles({ search: "", page: 1, limit: 2 });
+    const second = fonts.listFiles({ search: "", page: 2, limit: 2 });
+    expect(first.total).toBe(3);
+    expect(new Set([...first.data, ...second.data].map(row => row.id)).size).toBe(3);
+    database.close();
+  });
   test("normalizes Unicode aliases and uses an indexed lookup", () => {
     const directory = mkdtempSync(join(tmpdir(), "fontinass-lookup-"));
     directories.push(directory);
@@ -111,4 +130,3 @@ describe("SqliteActivityRepository", () => {
     database.close();
   });
 });
-

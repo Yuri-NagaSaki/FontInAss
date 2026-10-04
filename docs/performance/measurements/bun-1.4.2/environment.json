@@ -1,0 +1,18 @@
+{
+  "baseCommit": "7c06fd982911591a1d87bef1b9973fcde461146e",
+  "snapshotSha256": "f1c0414319762f40b25625afac8eb82173afd34f46b0a167cd252ebb767db134",
+  "kernel": "Linux 6.8.0-110-generic",
+  "release": {
+    "tag_name": "bun-v1.4.2",
+    "html_url": "https://github.com/oven-sh/bun/releases/tag/bun-v1.4.2",
+    "published_at": "2026-09-05T05:55:48Z",
+    "prerelease": false
+  },
+  "cpus": 8,
+  "cpuModel": "AMD EPYC 9645 96-Core Processor (VM)",
+  "containerMemoryBytes": 3221225472,
+  "concurrency": 2,
+  "httpLoadGeneratorBun": "1.4.0",
+  "releaseAssetSha256": "36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913",
+  "installedBinarySha256": "a83d263767d839e4d2649ca8e35d07159c7afc99afdc96d731ced29e056dda0c"
+}

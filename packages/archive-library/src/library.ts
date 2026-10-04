@@ -21,6 +21,7 @@ export interface ArchiveLibraryOptions {
 }
 
 export class DefaultArchiveLibrary implements ArchiveLibrary {
+  private publishedCache: { value: SharedArchive[]; expiresAt: number } | null = null;
   constructor(
     private readonly repository: ArchiveRepository,
     private readonly published: PublishedArchiveStore,
@@ -30,10 +31,13 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
   ) {}
 
   listPublished(): SharedArchive[] {
-    return this.repository.listPublished().map((record) => ({
+    if (this.publishedCache && this.publishedCache.expiresAt > Date.now()) return this.publishedCache.value;
+    const value = this.repository.listPublished().map((record) => ({
       ...toPublicArchive(record),
       download_url: record.r2_key ? this.published.publicUrl(record.r2_key) : null,
     }));
+    this.publishedCache = { value, expiresAt: Date.now() + 5000 };
+    return value;
   }
 
   listPending(): SharedArchive[] {
@@ -48,11 +52,13 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
     const existing = this.repository.findByStorageKey(key);
     if (existing) {
       this.repository.delete(existing.id);
+      this.publishedCache = null;
       await this.pending.delete(existing.pending_path);
     }
     const record = makeRecord(input, inspection, { status: "published", storageKey: key, pendingPath: null });
     record.download_url = this.published.publicUrl(key);
     this.repository.insert(record);
+    this.publishedCache = null;
     await this.writeManifest();
     return toPublicArchive(record);
   }
@@ -67,6 +73,7 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
     const path = await this.pending.put(id, input.filename, input.bytes);
     const record = makeRecord(input, inspection, { id, status: "pending", storageKey: null, pendingPath: path });
     this.repository.insert(record);
+    this.publishedCache = null;
     return toPublicArchive(record);
   }
 
@@ -90,6 +97,7 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
       pending_path: null,
       updated_at: new Date().toISOString(),
     });
+    this.publishedCache = null;
     await this.pending.delete(record.pending_path);
     if (!updated) throw new ArchiveLibraryError("Archive disappeared during approval", "not_found");
     await this.writeManifest();
@@ -100,6 +108,7 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
     const record = this.repository.findById(id);
     if (!record || record.status !== "pending") throw new ArchiveLibraryError("Archive not found or not pending", "not_found");
     const updated = this.repository.update(id, { status: "rejected", pending_path: null, updated_at: new Date().toISOString() });
+    this.publishedCache = null;
     await this.pending.delete(record.pending_path);
     if (!updated) throw new ArchiveLibraryError("Archive disappeared during rejection", "not_found");
     return toPublicArchive(updated);
@@ -107,6 +116,7 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
 
   async remove(id: string): Promise<void> {
     const record = this.repository.delete(id);
+    this.publishedCache = null;
     if (!record) throw new ArchiveLibraryError("Archive not found", "not_found");
     if (record.r2_key && this.published.isConfigured()) await this.published.delete(record.r2_key);
     await this.pending.delete(record.pending_path);
@@ -130,6 +140,7 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
       }
     }
     const updated = this.repository.update(id, next);
+    this.publishedCache = null;
     if (!updated) throw new ArchiveLibraryError("Archive not found", "not_found");
     if (updated.status === "published") await this.writeManifest();
     return toPublicArchive(updated);
@@ -162,6 +173,7 @@ export class DefaultArchiveLibrary implements ArchiveLibrary {
       pending_path: null,
     }));
     this.repository.replacePublished(records);
+    this.publishedCache = null;
     return records.length;
   }
 
