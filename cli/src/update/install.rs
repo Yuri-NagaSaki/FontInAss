@@ -7,7 +7,15 @@ use semver::Version;
 
 pub(super) struct Installation {
     pub path: PathBuf,
-    _lock: File,
+    lock: File,
+}
+
+impl Drop for Installation {
+    fn drop(&mut self) {
+        // Release explicitly before closing; update verification spawns children,
+        // which can briefly retain inherited file descriptions on some platforms.
+        let _ = self.lock.unlock();
+    }
 }
 
 impl Installation {
@@ -32,7 +40,7 @@ impl Installation {
         })?;
         // Keep the empty lock file: unlinking it would allow concurrent processes
         // to acquire locks on different inodes with the same filename.
-        Ok(Self { path, _lock: lock })
+        Ok(Self { path, lock })
     }
 
     pub async fn replace(&self, candidate: &Path, version: &Version) -> Result<()> {
