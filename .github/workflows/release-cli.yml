@@ -5,16 +5,18 @@ on:
     tags:
       - "v*"
       - "cli-v*"
-    paths:
-      - "cli/**"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v2.0.0 or cli-v2.0.0). Leave empty to build without releasing."
+        description: "Existing release tag (e.g. cli-v2.1.0). Leave empty to build artifacts only."
         required: false
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-cli-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -22,25 +24,48 @@ env:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             name: fontinass-linux-x64
           - target: x86_64-apple-darwin
-            os: macos-latest
+            os: macos-15-intel
             name: fontinass-macos-x64
           - target: aarch64-apple-darwin
-            os: macos-latest
+            os: macos-15
             name: fontinass-macos-arm64
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             name: fontinass-windows-x64.exe
 
     runs-on: ${{ matrix.os }}
-
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check release version
+        id: version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+        run: |
+          python - <<'PY'
+          import os, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('cli/Cargo.toml').read_text())['package']['version']
+          tag = os.environ.get('RELEASE_TAG', '')
+          if tag and tag not in (f'v{version}', f'cli-v{version}'):
+              raise SystemExit(f'Tag {tag} does not match CLI version {version}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\n')
+          PY
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -56,46 +81,88 @@ jobs:
             cli/target
           key: ${{ runner.os }}-cargo-${{ matrix.target }}-${{ hashFiles('cli/Cargo.lock') }}
 
+      - name: Test
+        working-directory: cli
+        run: cargo test --locked --target ${{ matrix.target }}
+
       - name: Build
         working-directory: cli
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Rename binary (Unix)
-        if: runner.os != 'Windows'
-        run: cp cli/target/${{ matrix.target }}/release/fontinass ${{ matrix.name }}
-
-      - name: Rename binary (Windows)
-        if: runner.os == 'Windows'
-        run: cp cli/target/${{ matrix.target }}/release/fontinass.exe ${{ matrix.name }}
+      - name: Check and stage binary
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          RELEASE_TARGET: ${{ matrix.target }}
+          ASSET_NAME: ${{ matrix.name }}
+        run: |
+          binary="cli/target/$RELEASE_TARGET/release/fontinass"
+          if [ "$RUNNER_OS" = Windows ]; then binary="$binary.exe"; fi
+          test "$("$binary" --version)" = "fontinass $RELEASE_VERSION"
+          "$binary" subset --help
+          cp "$binary" "$ASSET_NAME"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.name }}
           path: ${{ matrix.name }}
+          if-no-files-found: error
 
   release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/cli-v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '')
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
 
-      - name: Determine tag
-        id: tag
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify assets and generate checksums
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
-          fi
+          python - <<'PY'
+          import hashlib, json, os, subprocess, tomllib
+          from pathlib import Path
+          version = tomllib.loads(Path('cli/Cargo.toml').read_text())['package']['version']
+          tag = os.environ['RELEASE_TAG']
+          assert tag in (f'v{version}', f'cli-v{version}')
+          notes = Path('docs/releases') / f'{tag}.md'
+          assert notes.is_file(), f'Missing release notes: {notes}'
+          directory = Path('artifacts')
+          expected = {'fontinass-linux-x64', 'fontinass-macos-x64', 'fontinass-macos-arm64', 'fontinass-windows-x64.exe'}
+          assert {p.name for p in directory.iterdir()} == expected, 'Incomplete or unexpected release artifacts'
+          assets = []
+          for path in sorted(directory.iterdir()):
+              assert path.stat().st_size > 0
+              assets.append({'name': path.name, 'size': path.stat().st_size, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()})
+          info = {'version': version, 'tag': tag, 'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'assets': assets}
+          (directory / 'BUILD-INFO.json').write_text(json.dumps(info, indent=2) + '\n')
+          (directory / 'SHA256SUMS').write_text(''.join(f"{a['sha256']}  {a['name']}\n" for a in assets))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'tag={tag}\nversion={version}\nnotes={notes}\n')
+          PY
 
-      - name: Create Release
+      - name: Create draft release for download verification
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          files: artifacts/**/*
-          generate_release_notes: true
+          tag_name: ${{ steps.metadata.outputs.tag }}
+          name: FontInAss CLI v${{ steps.metadata.outputs.version }}
+          body_path: ${{ steps.metadata.outputs.notes }}
+          files: artifacts/*
+          fail_on_unmatched_files: true
+          draft: true

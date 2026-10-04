@@ -149,7 +149,7 @@ SRT 未提供自定义样式时使用 Arial 默认样式，输出为 ASS；缺�
 
 ## CLI 工具
 
-跨平台命令行工具，通过 FontInAss 服务处理字幕文件。
+跨平台命令行工具，通过 FontInAss 服务处理字幕文件。 当前版本为 [CLI v2.1.0](https://github.com/Yuri-NagaSaki/FontInAss/releases/tag/cli-v2.1.0)，更新后运行 `fontinass --version` 确认版本。
 
 从 [GitHub Releases](https://github.com/Yuri-NagaSaki/FontInAss/releases) 下载对应平台的二进制文件：
 

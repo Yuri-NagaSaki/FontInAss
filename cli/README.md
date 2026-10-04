@@ -4,7 +4,7 @@ CLI tool for [FontInAss](https://github.com/Yuri-NagaSaki/FontInAss) — embed f
 
 ## Install
 
-Download the latest binary from [Releases](https://github.com/Yuri-NagaSaki/FontInAss/releases):
+Current release: [CLI v2.1.0](https://github.com/Yuri-NagaSaki/FontInAss/releases/tag/cli-v2.1.0). Download the binary for your platform:
 
 | Platform | Binary |
 |----------|--------|
@@ -20,6 +20,8 @@ sudo mv fontinass-linux-x64 /usr/local/bin/fontinass
 
 # Windows: add to PATH or use directly
 ```
+
+Download `SHA256SUMS` from the same release to verify your binary (`sha256sum --ignore-missing -c SHA256SUMS` on Linux, or `shasum -a 256` on macOS). `BUILD-INFO.json` records the source commit and all artifact hashes. Run `fontinass --version` after replacing the installed binary; this release prints `fontinass 2.1.0`.
 
 ## Quick Start
 
@@ -139,9 +141,9 @@ In `--strict` mode, warnings (partial font matches) also cause exit code 1.
 ## Build from Source
 
 ```bash
-# Requires Rust 1.85+
+# Requires a current stable Rust toolchain (edition 2024)
 cd cli
-cargo build --release
+cargo build --release --locked
 # Binary at: target/release/fontinass
 ```
 
