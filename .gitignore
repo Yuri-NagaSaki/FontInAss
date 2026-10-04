@@ -45,3 +45,6 @@ cli/target/
 # Python verification artifacts
 __pycache__/
 *.pyc
+
+# Local Python environments
+.venv/

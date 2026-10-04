@@ -9,6 +9,12 @@ pub struct Config {
     pub server: String,
     #[serde(default)]
     pub api_key: String,
+    #[serde(default = "default_update_check")]
+    pub update_check: bool,
+}
+
+fn default_update_check() -> bool {
+    true
 }
 
 fn default_server() -> String {
@@ -20,6 +26,7 @@ impl Default for Config {
         Self {
             server: default_server(),
             api_key: String::new(),
+            update_check: true,
         }
     }
 }
@@ -53,5 +60,19 @@ impl Config {
         std::fs::write(&path, content)
             .with_context(|| format!("Failed to write {}", path.display()))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_configuration_keeps_credentials_and_enables_version_checks() {
+        let config: Config =
+            toml::from_str("server = 'https://example.test'\napi_key = 'fixture-key'\n").unwrap();
+        assert_eq!(config.server, "https://example.test");
+        assert_eq!(config.api_key, "fixture-key");
+        assert!(config.update_check);
     }
 }

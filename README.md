@@ -1,251 +1,195 @@
+# FontInAss
 
-<h1 align="center">FontInAss</h1>
+FontInAss 将字幕使用的字体提取为子集，嵌入 ASS 字幕的 `[Fonts]` 节。它支持 ASS、SSA、SRT 输入，通过 Web、CLI 或 API 使用，适合字幕制作、批量处理和自建字体服务。
 
-<p align="center">
-  <strong>开源字幕字体子集化服务</strong><br>
-  上传 ASS / SSA / SRT 字幕，自动匹配字体并嵌入精简子集，保留字体布局与字形信息
-</p>
+[在线服务](https://font.anibt.net) · [CLI 下载](https://github.com/Yuri-NagaSaki/FontInAss/releases/latest) · [问题反馈](https://github.com/Yuri-NagaSaki/FontInAss/issues) · [Telegram 社群](https://t.me/anibtass)
 
-<p align="center">
-  <a href="https://font.anibt.net">在线服务</a> ·
-  <a href="https://github.com/Yuri-NagaSaki/FontInAss/releases/tag/v2.0.0">v2.0.0</a> ·
-  <a href="#cli-工具">CLI 工具</a> ·
-  <a href="#docker-部署">Docker 部署</a> ·
-  <a href="https://t.me/anibtass">Telegram 社群</a>
-</p>
+## 选择使用方式
 
----
+| 需要做什么 | 入口 |
+| --- | --- |
+| 直接处理几个字幕 | [在线字幕处理](https://font.anibt.net/subset) |
+| 处理目录或接入脚本 | [CLI 使用与更新](cli/README.md) |
+| 使用自己的字体库和服务器 | [自部署指南](docs/deployment.md) |
+| 在其他程序中调用 | [API 接入说明](docs/api.md) |
+| 修改代码或复查性能 | [开发与验证](#开发与验证)、[性能报告](docs/performance/2026-10-04-bun-1.4.2.md) |
 
-> [!IMPORTANT]
-> FontInAss v2.0.0 是一次不兼容的服务端完全重写。v1 的 `fonts.db`、upload token 和处理日志不会直接迁移；升级前请阅读[从 v1 升级](#从-v1-升级)。Rust CLI 使用的 `/api/subset` 传输协议仍是 v2 正式协议，现有调用方式无需修改。
+CLI 是服务端的客户端：它把字幕发送给配置的 FontInAss 服务，由服务器匹配字体并生成结果。运行 CLI 不需要 Bun、Python 或本机字体库；离线处理需要在本机部署完整服务。
 
-## 简介
+## 能做什么
 
-FontInAss 是一个开源的字幕字体子集化工具。将 ASS/SSA/SRT 字幕文件上传后，系统自动从在线字体库中匹配字幕引用的字体，提取实际使用的字符生成极小的子集化字体，并嵌入到字幕文件中。
+- 根据 ASS/SSA 样式、字体覆盖标签、字重、斜体和可见字符收集字体需求，区分绘图与文字。
+- 使用 HarfBuzz 生成字体子集，并保留所需布局依赖、字形轮廓、竖排信息及连字；FontTools 维护字体名称。
+- 报告缺失字体和缺失字形；严格模式在存在这些问题时不输出处理结果。
+- 选择兼容别名或保留原字体名，支持已有子集字幕的清理和重新处理。
+- 管理本地字体库：扫描、匹配、上传、去重；区分匿名投稿、字幕组凭证与管理员权限。
+- 通过可选的 Cloudflare R2 存储发布和分享字幕包，支持投稿审核与 manifest 恢复。
 
-支持 Web 界面、命令行工具（CLI）和 API 调用三种使用方式。
+SRT 会转换为 ASS；未提供自定义样式时使用 Arial，服务器需要有对应字体。字体体积减少程度取决于源字体、使用字符和布局依赖，不保证固定压缩比例。
 
-## 主要功能
+## 在线处理
 
-- 提取所需字符及其布局依赖，实际压缩比例取决于字体和字幕内容
-- 在线字体库，收录数万款中日韩及西文字体
-- 批量处理与可控并发
-- 跨平台 CLI 工具，本地批量处理
-- 字幕分享，浏览和下载社区贡献的已处理字幕包
-- Hono RPC + Zod 端到端 JSON 契约
-- SQLite 字体目录与 R2 分享 manifest 灾备
-- Docker 一键部署
+1. 打开 [字幕处理页面](https://font.anibt.net/subset)，选择或拖入 `.ass`、`.ssa`、`.srt` 文件。
+2. 在设置中选择严格模式、字体命名方式；已有内嵌字体的字幕需启用清理后重新处理。
+3. 查看缺失字体或字形提示，处理完成后下载单个字幕或批量 ZIP。
 
-## v2 架构
+字幕和文件名会发送到所选服务器。服务记录处理文件名、状态、缺失字体和耗时；需要控制数据范围时，可使用本地部署。
 
-v2 将旧的单体路由实现重写为按能力划分的 Bun workspace：
+## CLI 快速开始
 
-```text
-packages/
-  contracts/             wire DTO、Zod schema、响应 CODE
-  subtitle-processing/   ASS/SSA/SRT 解析与字体子集化
-  font-catalog/          字体匹配、索引、上传与去重
-  archive-library/       分享库、审核与 manifest
-  access-control/        上传申请、凭证签发/验证/吊销与审计
-  font-submission/       受控字体提交、限额、去重与结果归一化
-  activity-log/          处理记录与缺失字体
-  persistence/           SQLite adapters
-  storage/               FS 与 R2 adapters
-server/
-  src/container.ts       唯一组合根
-  src/app.ts             Hono 路由与 AppType
-web/
-  src/api/client.ts      Hono RPC + 文件/二进制 adapter
-```
+当前 CLI 版本为 **[v2.2.0](https://github.com/Yuri-NagaSaki/FontInAss/releases/tag/cli-v2.2.0)**，与服务端 v2 协议兼容。
 
-JSON 接口由共享 Zod schema 校验并通过 Hono RPC 向 Web 提供类型；字体、字幕包、流和 `/api/subset` 二进制传输使用专用 adapter。正式接口由 v1 的 43 个收敛为 40 个，不提供旧路由兼容层。
+| 平台 | 下载文件 |
+| --- | --- |
+| Linux x64 | [fontinass-linux-x64](https://github.com/Yuri-NagaSaki/FontInAss/releases/latest/download/fontinass-linux-x64) |
+| macOS Intel | [fontinass-macos-x64](https://github.com/Yuri-NagaSaki/FontInAss/releases/latest/download/fontinass-macos-x64) |
+| macOS Apple Silicon | [fontinass-macos-arm64](https://github.com/Yuri-NagaSaki/FontInAss/releases/latest/download/fontinass-macos-arm64) |
+| Windows x64 | [fontinass-windows-x64.exe](https://github.com/Yuri-NagaSaki/FontInAss/releases/latest/download/fontinass-windows-x64.exe) |
 
-## Docker 部署
+下载后将程序改名为 `fontinass`（Windows 为 `fontinass.exe`）并放入 `PATH`。Linux/macOS 需要 `chmod +x fontinass`。Release 附带 `SHA256SUMS` 和 `BUILD-INFO.json` 供校验。
 
 ```bash
-git clone git@github.com:Yuri-NagaSaki/FontInAss.git
+fontinass --version
+fontinass config set server https://font.anibt.net
+
+# 将结果写入独立目录，保留原文件
+fontinass subset --strict -o ./output/ *.ass
+
+# 递归处理目录
+fontinass subset --strict -r -o ./output/ ./subs/
+
+# 保留原始字体名
+fontinass subset --font-name-mode preserve --strict -o ./output/ *.ass
+
+# 清理已有字体并重新处理
+fontinass subset --clean --font-name-mode preserve --strict -o ./output/ *.ass
+```
+
+不指定 `-o` 时，ASS/SSA 成功结果会替换原文件。SRT 结果写为同名 `.ass`，原 `.srt` 保留。输出到单个目录时，同名文件或其他输出路径冲突会在请求前报错。
+
+### 检查与安装更新
+
+```bash
+fontinass update --check       # 查询最新稳定 CLI 版本
+fontinass update               # 校验并安装到当前程序位置
+fontinass config set update-check false   # 关闭启动检查
+```
+
+v2.2.0 起，交互式命令启动时在后台检查更新，命令结束时提示。检查结果缓存 24 小时，网络预算为 1.2 秒；断网和 GitHub 限流不改变字幕处理结果。CI、非交互输出、`--help`、`--version` 不执行自动检查。可用 `--no-update-check` 或 `FONTINASS_NO_UPDATE_CHECK=1` 临时关闭。
+
+启动检查只提示，不自动安装。`update` 从本仓库的稳定 `cli-v*` Release 下载当前平台文件，校验大小、SHA-256 和可执行版本后替换程序。安装目录必须可写；没有权限时会报错，不自动提权。
+
+**v2.1.0 及更早版本没有 `update` 命令，需要先手动替换为 v2.2.0。** 完整参数、配置路径、退出码和更新限制见 [CLI README](cli/README.md)。
+
+### 字体命名
+
+CLI 默认 `--font-name-mode alias`；Web 的默认设置保留原字体名。
+
+| 模式 | 行为 | 适用情况 |
+| --- | --- | --- |
+| `alias` | 改写字幕字体引用及内嵌家族名，别名纳入字符集合 | 减少多轨字幕中同名子集字体冲突 |
+| `preserve` | 保留字幕引用的原始家族名 | 后续需要按原名查找字体的工具链 |
+
+`--strict` 和 `--clean` 不选择命名模式。从已生成别名的字幕恢复原名，需要保留 `; Font Subset: ALIAS - OriginalFontName` 注释，使用 `--font-name-mode preserve --clean`，且服务器仍能找到原始字体。多轨 MKV 可为各轨设置不同的 `--alias-salt SC`、`--alias-salt TC`；保名模式仍需处理同名字体冲突。
+
+## 本地部署
+
+推荐 Linux，需 Git、Docker Engine、Compose v2、Bash、`flock` 和可用字体文件。镜像包含 Bun 1.4.2、HarfBuzz、FontTools 和 7z。
+
+```bash
+git clone https://github.com/Yuri-NagaSaki/FontInAss.git
 cd FontInAss
 mkdir -p fonts data
 cp .env.example .env
-# 编辑 .env，设置 API_KEY
-docker compose up -d
-```
-
-访问 `http://localhost:3300`，进入字体管理页面点击「扫描并索引」建立字体索引。
-
-更新现有 v2 部署：
-
-```bash
-git pull --ff-only
+# 编辑 .env，设置强随机 API_KEY；将字体放入 fonts/
 ./rebuild-and-start.sh
 ```
 
-脚本要求先提交代码，并对部署加锁。构建期间旧服务继续运行；构建完成后，将 SQLite 在线备份到 `data/backups/`，再切换容器并验证健康契约及镜像提交号。切换失败会恢复 `fontinass-local:rollback` 镜像。备份文件含权限与业务数据，应限制访问并定期按运维策略清理。
+访问 `http://localhost:3300`，在字体管理页面输入管理员密钥并扫描索引。新部署不附带字体库，仓库中的 `fonts/` 和 `data/` 是本机持久化目录。
 
-compose 将容器内存限制为 3GiB（`mem_limit` 与 `memswap_limit` 相同，不使用 swap）。超出后由内核 OOM 结束进程，`restart: unless-stopped` 会拉起新进程。
-
-## 从 v1 升级
-
-v2 使用全新的 `data/fontinass-v2.db`，不会改写旧 `data/fonts.db`。建议按以下顺序一次性切换：
+默认只绑定 `127.0.0.1:3300`，容器内存上限为 3 GiB。公开访问需配置 HTTPS 反向代理和 `CORS_ORIGIN`；`API_KEY` 为空会开放管理接口，应在首次启动前设置。
 
 ```bash
+# 更新现有部署
 git pull --ff-only
-cp data/fonts.db data/fonts.db.v1-backup
-bun install --frozen-lockfile
-
-# 使用 R2 字幕分享库时执行；从旧 DB 导出 published 完整元数据到 R2 manifest
-bun run data:manifest
-
-# 从 ./fonts 离线建立全新的 v2 字体索引
-bun run data:reindex
-
 ./rebuild-and-start.sh
+
+# 检查运行状态
+curl -fsS http://127.0.0.1:3300/api/health
+docker compose logs --tail=50
 ```
 
-- `data:manifest` 需要 `.env` 中的 R2 凭据；未使用分享库时跳过。
-- v1 upload token、处理日志、缺失字体 resolved 状态和 rate-limit 计数不会迁移。
-- 切换后请在管理界面重新签发 upload token。
-- 回滚时保留旧 `fonts.db` 和旧镜像即可；R2 原有 blob 不会移动或改名。
+部署脚本先构建，再在线备份 SQLite、切换容器，最后核对健康响应、提交号和 Bun 版本；失败时恢复旧镜像。数据备份、配置项、R2、回滚及 v1 迁移见 [自部署指南](docs/deployment.md)。
 
-### 配置项
+## API
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `PORT` | `3000` | 服务器端口 |
-| `API_KEY` | _(空)_ | 管理鉴权密钥 |
-| `CORS_ORIGIN` | `*` | 允许访问 API 的前端 origin |
-| `FONT_DIR` | `./fonts` | 字体存储目录 |
-| `DB_PATH` | `./data/fontinass-v2.db` | v2 数据库路径 |
-| `PENDING_DIR` | `./data/pending-v2` | 待审核字幕包目录 |
-| `LOG_DIR` | `./data/logs` | 服务日志目录 |
-| `SUBSET_CONCURRENCY` | `2` | 全局同时处理的字幕请求数；批次内依次处理，超额请求返回 503 |
-| `SUBSET_MAX_FILES` | `20` | 单次批量字幕文件数上限 |
-| `SUBSET_MAX_FILE_SIZE` | `8388608` | 单个字幕文件最大字节数 |
-| `SUBSET_MAX_BATCH_SIZE` | `33554432` | 单次批量字幕总字节上限 |
-| `CACHE_MAX_ENTRIES` | `100` | 字幕结果内存缓存条目数 |
-| `CACHE_MAX_BYTES` | `67108864` | 字幕结果内存缓存字节上限 |
-| `ACTIVITY_RETENTION_DAYS` | `30` | 处理日志保留天数 |
-| `UPLOAD_TARGET_DIR` | `CatCat-Fonts/` | Web/API 字体投稿目标目录 |
-| `PUBLIC_UPLOAD_MAX_FILES` | `20` | 公开页面单批最大文件数 |
-| `PUBLIC_UPLOAD_MAX_FILE_SIZE` | `104857600` | 公开页面单个字体文件最大字节数 |
-| `PUBLIC_UPLOAD_MAX_BATCH_SIZE` | `104857600` | 公开页面单批总字节上限 |
-| `PUBLIC_UPLOAD_REQUESTS_PER_MINUTE` | `30` | 公开页面单 IP 每分钟请求上限 |
-| `TOKEN_APPLICATION_DAILY_LIMIT` | `3` | 单 IP 每日上传权限申请上限 |
-| `AUTO_INDEX_INTERVAL_HOURS` | `4` | 自动扫描、索引和去重周期 |
-| `SHARING_MAX_FILE_SIZE` | `209715200` | 字幕包最大压缩文件大小 |
-| `ARCHIVE_MAX_UNCOMPRESSED` | `2147483648` | 字幕包最大解压总大小 |
-| `SHARING_RATE_LIMIT` | `3` | 单 IP 每日社区投稿上限 |
-| `R2_*` | _(空)_ | 分享库使用的 Cloudflare R2 配置 |
-
-完整示例见 [.env.example](.env.example)。已有 `.env` 不会自动采用新默认值，3 GiB 容器建议设置 `SUBSET_CONCURRENCY=2`、`SUBSET_MAX_FILE_SIZE=8388608`、`SUBSET_MAX_BATCH_SIZE=33554432`。生产环境务必设置强随机 `API_KEY`，并通过反向代理提供 HTTPS。
-
-SRT 未提供自定义样式时使用 Arial 默认样式，输出为 ASS；缺少字体或字形时会报告。严格模式遇到缺字不会返回处理结果。别名包含所需字符集合，降低不同字幕轨的子集字体冲突；`preserve` 模式仍需使用者处理多轨同名字体的冲突。
-
-## 字体上传权限
-
-字体上传分为两条独立路径：`/upload` 是匿名公开投稿，执行文件数、单文件大小、批次大小与 IP 频率限制；字幕组通过 `/access` 申请后台凭证，管理员审核后，凭证可进入 `/fonts` 查看和下载全部已索引字体，并使用不受公开投稿策略约束的后台上传或 `POST /api/v1/upload`。
-
-字幕组凭证不能删除字体、重建索引或管理其他凭证；这些破坏性能力只接受 `API_KEY` 管理员密钥。管理员也可直接签发字幕组凭证。吊销采用软吊销，上传历史会保留。
-
-## CLI 工具
-
-跨平台命令行工具，通过 FontInAss 服务处理字幕文件。 当前版本为 [CLI v2.1.0](https://github.com/Yuri-NagaSaki/FontInAss/releases/tag/cli-v2.1.0)，更新后运行 `fontinass --version` 确认版本。
-
-从 [GitHub Releases](https://github.com/Yuri-NagaSaki/FontInAss/releases) 下载对应平台的二进制文件：
-
-| 平台 | 文件 |
-|------|------|
-| Linux x64 | `fontinass-linux-x64` |
-| macOS x64 | `fontinass-macos-x64` |
-| macOS ARM | `fontinass-macos-arm64` |
-| Windows x64 | `fontinass-windows-x64.exe` |
+`POST /api/subset` 提供公共字幕处理。单文件返回二进制字幕及 `X-Code`/`X-Message`，多文件返回 JSON/base64；HTTP 200 本身不等于处理成功。
 
 ```bash
-# 配置服务器（仅需一次）
-fontinass config set server https://font.anibt.net
-
-# 处理单个文件
-fontinass subset file.ass
-
-# 批量处理
-fontinass subset *.ass
-
-# 递归处理目录
-fontinass subset -r ./subs/
-
-# 关闭兼容别名，保留原始字体名
-fontinass subset --font-name-mode preserve --strict --clean *.ass
-
-# 多字幕轨内封时，为不同轨道使用不同别名盐，避免 MKV 字体冲突
-fontinass subset --alias-salt SC simple-jp.ass
-fontinass subset --alias-salt TC traditional-jp.ass
+curl -sS -D response.headers \
+  -H 'Content-Type: application/octet-stream' \
+  -H 'X-Fonts-Check: 1' \
+  --data-binary @input.ass \
+  https://font.anibt.net/api/subset -o output.ass
 ```
 
-CLI 默认使用 `--font-name-mode alias`；`preserve` 保留字幕引用和内嵌字体的原始家族名。`--strict` 和 `--clean` 不改变命名模式。还原已生成别名的字幕时，需要保留 `; Font Subset:` 映射注释，并使用 `--font-name-mode preserve --clean` 重新处理；服务端仍需具备对应原始字体。
-
-详细文档见 [cli/README.md](cli/README.md)。
+读取响应头中的 `X-Code`：`200` 为成功，`201` 为带警告结果，`300` 为严格模式的缺失字体或字形，`400` 为输入错误，`500` 为服务错误。业务错误可能通过 HTTP 200 返回；服务繁忙时返回 HTTP 503 和 `Retry-After`。完整接入示例见 [API 文档](docs/api.md)。
 
 ## 开发与验证
 
-需要 Bun 1.4.2、Python 3（安装 FontTools 4.62.1）、HarfBuzz CLI（`hb-subset`）和 7z。Docker 镜像已包含这些依赖：
+| 部分 | 工具 |
+| --- | --- |
+| 服务端 | Bun 1.4.2、Hono、SQLite |
+| 字体处理 | HarfBuzz CLI、Python 3 + FontTools 4.62.1 |
+| Web | Vue 3、Vite、Tailwind CSS |
+| CLI | Rust stable，edition 2024；使用 `File::try_lock`，最低 Rust 1.89 |
+| 归档检查 | 7z |
 
 ```bash
 bun install --frozen-lockfile
-bun run typecheck
-bun run test
-bun run build
+bun run check                  # 类型检查、测试、Web 与服务端构建
+cargo test --locked --manifest-path cli/Cargo.toml
+cargo build --release --locked --manifest-path cli/Cargo.toml
 
-# 一次执行完整检查
-bun run check
+# 开发环境；路径配置见 docs/deployment.md
+bun run dev
 ```
 
-数据脚本：
+源码直接运行的路径相对于启动工作目录；开发配置和原生依赖安装见 [自部署指南](docs/deployment.md#源码运行与开发)。CLI 配置与服务端 `.env` 相互独立。
 
-```bash
-bun run data:manifest  # 从旧 DB 写入 R2 archive manifest
-bun run data:reindex   # 从 FONT_DIR 重建 v2 SQLite 字体索引
+```text
+cli/                      Rust 客户端、版本检查与自更新
+web/                      Vue 页面与 API 客户端
+server/                   HTTP 路由、配置、生命周期、依赖组装
+packages/
+  subtitle-processing/    字幕分析、原生字体进程池、UUEncode
+  font-catalog/           字体匹配、索引、投稿去重
+  archive-library/        字幕包检查、审核、分享
+  access-control/         凭证、申请、权限与限流
+  font-submission/        投稿策略与记录
+  activity-log/           处理记录与缺失字体统计
+  persistence/           SQLite 存取
+  storage/               本地文件与 R2
+  contracts/             Zod 契约、DTO 与状态码
+scripts/                  性能基线、字形对比与持续处理验证
 ```
 
-## 审计与性能复查
+## 性能与兼容性
 
-完整记录见 [2026-10-04 项目审计](docs/audits/2026-10-04-project-audit.md) 和 [Bun 1.4.2 升级与性能基线](docs/performance/2026-10-04-bun-1.4.2.md)。
+本机三轮基线中，结果缓存未命中的字幕处理中位数从约 210 ms 降至 12.45 ms，双并发吞吐量从 8.68 提升到 82.53 文件/秒。该结果针对已预热工作进程和指定字体库；首个请求仍包含初始化开销，不是生产容量承诺。
 
-```bash
-bun scripts/benchmark-subset.ts http://127.0.0.1:3300 /tmp/fontinass-benchmark
-python3 scripts/verify-shaping.py /tmp/fontinass-benchmark
-python3 scripts/benchmark-lookup.py data/fontinass-v2.db
-```
+原生进程池受并发、内存、CPU、超时和输出量限制；每 64 个字体任务或空闲 30 秒后回收。全部测量条件、未改善指标、原始数据和复测脚本见 [性能报告](docs/performance/2026-10-04-bun-1.4.2.md)。
 
-子集化基准使用合成字幕，会产生正常处理日志；字形对比脚本需要本地生产字体库及 `hb-shape`。原生工作进程按全局并发数复用，每处理 64 个字体任务或空闲 30 秒后回收；保留内存、CPU、超时和输出限制。结果缓存未命中也可复用已加载的 Python 模块，但刚启动或空闲后的首个请求仍包含初始化耗时。
+- 支持 TTF、OTF、TTC、OTC 字体索引；实际字体覆盖由服务器库决定。
+- 不保证所有播放器、字体布局特性和 ASS 方言一致。重要发布应在目标播放器中复查。
+- 无 BOM 的旧编码可能有歧义，建议字幕使用 UTF-8。
+- 服务端 v2 不直接迁移 v1 的凭证和日志，升级前阅读 [迁移步骤](docs/deployment.md#从-v1-迁移)。
 
-完整负载测试使用独立数据库副本，字体目录只读挂载，避免影响生产数据：
+## 文档与许可
 
-```bash
-# SNAPSHOT_DB 是通过 SQLite backup 或 VACUUM INTO 生成的一致性副本。
-BENCHMARK_BUN=/path/to/fixed/bun python3 scripts/run-performance.py IMAGE SNAPSHOT_DB /tmp/fontinass-perf 1
-# 重复时将末尾轮次改为 2、3；A/B/C 对照应使用相同的负载生成器版本。
-```
+- [CLI 参考](cli/README.md) · [部署与配置](docs/deployment.md) · [API 接入](docs/api.md)
+- [CLI v2.2.0 发布说明](docs/releases/cli-v2.2.0.md)
+- [项目审计](docs/audits/2026-10-04-project-audit.md) · [Bun 升级与性能基线](docs/performance/2026-10-04-bun-1.4.2.md)
+- [端点清单](docs/plans/2026-07-22-server-rewrite-endpoint-ledger.md) · [v2 架构设计](docs/plans/2026-07-22-server-rewrite-design.md)
 
-`scripts/benchmark-build.py` 测量类型检查和构建；`scripts/summarize-performance.py` 汇总三轮 A/B/C 结果，并校验字幕输出逐字节一致。报告保留原始请求样本和资源采样汇总，不能将微基准结果等同于生产容量承诺。
-
-## API 与设计文档
-
-- [v2 正式端点清单](docs/plans/2026-07-22-server-rewrite-endpoint-ledger.md)
-- [服务端重写设计与实施记录](docs/plans/2026-07-22-server-rewrite-design.md)
-- [v2.0.0 发布说明](docs/releases/v2.0.0.md)
-
-## 技术栈
-
-| 组件 | 技术 |
-|------|------|
-| 运行时 | Bun |
-| 后端框架 | Hono |
-| 数据库 | SQLite |
-| 字体处理 | HarfBuzz + FontTools；直接读取 sfnt 名称与样式元数据 |
-| 前端 | Vue 3 + Tailwind CSS v4 |
-| CLI | Rust |
-| 部署 | Docker |
-
-## 许可证
-
-[AGPL-3.0](LICENSE)
+仓库根许可证为 [AGPL-3.0](LICENSE)；CLI 的 Cargo 元数据保留其既有 MIT 声明。字体文件不随源码分发，使用和分发字体应遵循各自许可证。

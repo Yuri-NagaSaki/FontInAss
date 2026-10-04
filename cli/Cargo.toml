@@ -1,7 +1,8 @@
 [package]
 name = "fontinass"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2024"
+rust-version = "1.89"
 description = "CLI tool for FontInAss subtitle font subsetting service"
 license = "MIT"
 
@@ -20,6 +21,9 @@ walkdir = "2"
 dirs = "6"
 anyhow = "1"
 tempfile = "3"
+semver = { version = "1", features = ["serde"] }
+sha2 = "0.11"
+self-replace = "1.5"
 
 [profile.release]
 opt-level = "z"

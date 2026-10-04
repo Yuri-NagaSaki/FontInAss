@@ -175,7 +175,7 @@ const onDrop = (e: DragEvent) => {
 
 const onClickUpload = () => {
   const input = document.createElement("input");
-  input.type = "file"; input.accept = ".ass,.ssa"; input.multiple = true;
+  input.type = "file"; input.accept = ".ass,.ssa,.srt"; input.multiple = true;
   input.onchange = (e) => { const fs = (e.target as HTMLInputElement).files; if (fs) addFiles(fs); };
   input.click();
 };

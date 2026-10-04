@@ -27,7 +27,13 @@ const copyCommand = async (cmd: string, id: string) => {
 
 const downloadUrl = (filename: string) => `${RELEASE_URL}/download/${filename}`;
 
-const quickInstall = `curl -fsSL "https://github.com/${REPO}/releases/latest/download/fontinass-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')" -o fontinass && chmod +x fontinass && sudo mv fontinass /usr/local/bin/`;
+const quickInstall = `case "$(uname -s)/$(uname -m)" in
+  Linux/x86_64) asset=fontinass-linux-x64 ;;
+  Darwin/x86_64) asset=fontinass-macos-x64 ;;
+  Darwin/arm64) asset=fontinass-macos-arm64 ;;
+  *) echo "Unsupported platform" >&2; exit 1 ;;
+esac
+curl -fL "https://github.com/${REPO}/releases/latest/download/$asset" -o fontinass && chmod +x fontinass && sudo mv fontinass /usr/local/bin/`;
 
 const codeExamples = [
   { id: "config",    titleKey: "cliExampleConfig",    code: "fontinass config set server https://font.anibt.net" },

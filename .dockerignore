@@ -8,6 +8,7 @@
 **/build
 **/target
 **/__pycache__
+**/.venv
 .env.*
 **/.env.*
 cli/

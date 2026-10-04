@@ -1,8 +1,10 @@
 mod client;
 mod config;
 mod display;
+mod update;
 
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
@@ -24,12 +26,23 @@ const BATCH_SIZE: usize = 10;
     about = "FontInAss CLI — embed fonts into subtitle files"
 )]
 struct Cli {
+    /// Disable the automatic startup update check for this invocation
+    #[arg(long, global = true)]
+    no_update_check: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Download and install the latest stable CLI release
+    Update {
+        /// Only check for a new version; do not change the executable
+        #[arg(long)]
+        check: bool,
+    },
+
     /// Process subtitle files: embed fonts via FontInAss server
     Subset {
         /// Input files or glob patterns (e.g. *.ass, subs/*.ssa)
@@ -79,7 +92,7 @@ enum Commands {
 enum ConfigAction {
     /// Set a config value
     Set {
-        /// Key to set (server, api-key)
+        /// Key to set (server, api-key, update-check)
         key: String,
         /// Value to set
         value: String,
@@ -193,7 +206,7 @@ async fn run_subset(
     clean: bool,
     font_name_mode: FontNameMode,
     alias_salt: Option<String>,
-) -> Result<()> {
+) -> Result<ExitCode> {
     let dim = Style::new().dim();
     let bold = Style::new().bold();
 
@@ -318,13 +331,11 @@ async fn run_subset(
     // Exit with non-zero if any failures in strict mode
     let has_errors = all_results.iter().any(|r| r.code >= 300);
     let has_warnings = all_results.iter().any(|r| r.code == 201);
-    if strict && (has_errors || has_warnings) {
-        std::process::exit(1);
-    } else if has_errors {
-        std::process::exit(1);
-    }
-
-    Ok(())
+    Ok(if has_errors || (strict && has_warnings) {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 fn run_config(action: ConfigAction) -> Result<()> {
@@ -336,7 +347,15 @@ fn run_config(action: ConfigAction) -> Result<()> {
             match key.as_str() {
                 "server" => cfg.server = value.clone(),
                 "api-key" | "api_key" => cfg.api_key = value.clone(),
-                _ => bail!("Unknown config key: {}. Valid keys: server, api-key", key),
+                "update-check" => {
+                    cfg.update_check = value
+                        .parse()
+                        .context("update-check must be true or false")?
+                }
+                _ => bail!(
+                    "Unknown config key: {}. Valid keys: server, api-key, update-check",
+                    key
+                ),
             }
             cfg.save()?;
             println!(
@@ -355,6 +374,7 @@ fn run_config(action: ConfigAction) -> Result<()> {
             let path = Config::path()?;
             println!("  Config: {}", dim.apply_to(path.display()));
             println!("  server:  {}", cfg.server);
+            println!("  update-check: {}", cfg.update_check);
             println!(
                 "  api-key: {}",
                 if cfg.api_key.is_empty() {
@@ -369,10 +389,21 @@ fn run_config(action: ConfigAction) -> Result<()> {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> ExitCode {
     let cli = Cli::parse();
+    let check = update::StartupCheck::begin(
+        cli.no_update_check
+            || matches!(
+                &cli.command,
+                Commands::Update { .. }
+                    | Commands::Config {
+                        action: ConfigAction::Set { .. }
+                    }
+            ),
+    );
 
     let result = match cli.command {
+        Commands::Update { check } => update::run(check).await.map(|_| ExitCode::SUCCESS),
         Commands::Subset {
             files,
             recursive,
@@ -397,12 +428,16 @@ async fn main() {
             )
             .await
         }
-        Commands::Config { action } => run_config(action),
+        Commands::Config { action } => run_config(action).map(|_| ExitCode::SUCCESS),
     };
+    check.finish().await;
 
-    if let Err(e) = result {
-        let err_style = Style::new().red().bold();
-        eprintln!("\n  {} {:#}", err_style.apply_to("Error:"), e);
-        std::process::exit(1);
+    match result {
+        Ok(code) => code,
+        Err(e) => {
+            let err_style = Style::new().red().bold();
+            eprintln!("\n  {} {:#}", err_style.apply_to("Error:"), e);
+            ExitCode::FAILURE
+        }
     }
 }
