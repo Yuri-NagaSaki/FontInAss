@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createConnection } from "node:net";
 import * as opentype from "opentype.js";
 import type { ApiTokenApplication, ApiUploadResponse } from "@fontinass/contracts";
 import { createApp } from "./app.js";
 import { createContainer } from "./container.js";
-import type { RuntimeConfig } from "./runtime.js";
+import { loadRuntimeConfig, type RuntimeConfig } from "./runtime.js";
 
 function fixtureFont(): Uint8Array<ArrayBuffer> {
   const path = new opentype.Path();
@@ -22,6 +23,68 @@ function fixtureFont(): Uint8Array<ArrayBuffer> {
 }
 
 describe("font access HTTP flow", () => {
+  test.each(["content-length", "chunked"])("interrupted multipart uploads with %s release both slots on the real Bun HTTP server", async framing => {
+    const directory = mkdtempSync(join(tmpdir(), "fontinass-upload-disconnect-"));
+    const config = loadRuntimeConfig(directory);
+    // Use only private fixtures even when the test runner inherits deployment env.
+    Object.assign(config, {
+      fontDirectory: join(directory, "fonts"), databasePath: join(directory, "data.db"),
+      pendingDirectory: join(directory, "pending"), logDirectory: join(directory, "logs"),
+      logLevel: "error", publicUploadRequestsPerMinute: 100,
+    });
+    const container = createContainer(config);
+    const app = createApp(container);
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: app.fetch });
+    const url = `http://127.0.0.1:${server.port}`;
+    try {
+      for (let round = 0; round < 3; round++) {
+        const sockets = [0, 1].map(() => createConnection({ port: server.port!, host: "127.0.0.1" }));
+        try {
+          await Promise.all(sockets.map(socket => new Promise<void>((resolve, reject) => {
+            socket.once("error", reject);
+            socket.once("connect", () => {
+              const part = '--broken\r\nContent-Disposition: form-data; name="file"; filename="partial.ttf"\r\n\r\npartial';
+              const headers = 'POST /api/upload HTTP/1.1\r\nHost: localhost\r\nContent-Type: multipart/form-data; boundary=broken\r\n';
+              const body = framing === "chunked"
+                ? `Transfer-Encoding: chunked\r\n\r\n${Buffer.byteLength(part).toString(16)}\r\n${part}\r\n`
+                : `Content-Length: 1000000\r\n\r\n${part}`;
+              socket.write(headers + body, error => error ? reject(error) : resolve());
+            });
+          })));
+          // Confirm both partial uploads reached admission before disconnecting.
+          let busy = false;
+          for (let attempt = 0; attempt < 50; attempt++) {
+            const probe = await fetch(`${url}/api/upload`, { method: "POST", body: new FormData() });
+            await probe.arrayBuffer();
+            if (probe.status === 503) { busy = true; break; }
+            await Bun.sleep(10);
+          }
+          expect(busy).toBe(true);
+          expect((await fetch(`${url}/api/health`)).status).toBe(200);
+        } finally { sockets.forEach(socket => socket.destroy()); }
+
+        // A recovered endpoint must accept and parse a real font, not merely
+        // return a healthy response from an unrelated endpoint.
+        let recovered: Response | undefined;
+        for (let attempt = 0; attempt < 50; attempt++) {
+          const form = new FormData();
+          form.append("file", new File([fixtureFont()], "recovery.ttf"));
+          recovered = await fetch(`${url}/api/upload`, { method: "POST", body: form });
+          if (recovered.status !== 503) break;
+          await recovered.arrayBuffer();
+          await Bun.sleep(10);
+        }
+        expect(recovered!.status).toBe(200);
+        const result = await recovered!.json() as ApiUploadResponse;
+        expect(result.summary.accepted + result.summary.duplicate).toBe(1);
+      }
+    } finally {
+      await server.stop(true);
+      container.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("separates limited public upload from reviewed member workspace access", async () => {
     const directory = mkdtempSync(join(tmpdir(), "fontinass-upload-flow-"));
     const config: RuntimeConfig = {

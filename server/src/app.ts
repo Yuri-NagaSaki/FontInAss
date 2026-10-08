@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { bodyLimit } from "hono/body-limit";
 import { admission } from "./admission.js";
+import { readRequestBody, RequestBodyError } from "./request-body.js";
 import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import { serveStatic } from "hono/bun";
@@ -122,8 +122,7 @@ export function createApp(container: AppContainer) {
 
   const subsetLimit = (type: string) => type.includes("multipart/form-data") ? container.config.subsetMaxBatchSize + 1024 * 1024 : container.config.subsetMaxFileSize;
   const subsetRoutes = new Hono()
-    .use("*", admission(container.config.subsetConcurrency, subsetLimit))
-    .use("*", (c, next) => bodyLimit({ maxSize: subsetLimit(c.req.header("content-type") ?? ""), onError: () => binarySubsetResponse(CODE.CLIENT_ERROR, ["Subtitle exceeds the size limit"], null) })(c, next))
+    .use("*", admission(container.config.subsetConcurrency, subsetLimit, { logger: container.logger }))
     .post("/", async (c) => {
     const startedAt = Date.now();
     const options = subsetOptionsFromHeaders(c);
@@ -202,7 +201,7 @@ export function createApp(container: AppContainer) {
       const archive = container.archives.listPublished().find((item) => item.id === c.req.valid("param").id);
       return archive?.download_url ? c.redirect(archive.download_url, 302) : c.json({ error: "Archive not found" }, 404);
     })
-    .post("/contribute", admission(2, () => container.config.archiveMaxFileSize + 1024 * 1024), bodyLimit({ maxSize: container.config.archiveMaxFileSize + 1024 * 1024 }), async (c) => {
+    .post("/contribute", admission(2, () => container.config.archiveMaxFileSize + 1024 * 1024, { logger: container.logger }), async (c) => {
       try {
         const { file, metadata } = await archiveForm(c);
         const archive = await container.archives.contribute({ filename: file.name, bytes: new Uint8Array(await file.arrayBuffer()), metadata }, hashClientIp(c));
@@ -317,11 +316,7 @@ export function createApp(container: AppContainer) {
       max_batch_bytes: container.config.publicUploadMaxBatchSize,
       requests_per_minute: container.config.publicUploadRequestsPerMinute,
     }))
-    .post("/", admission(2, () => container.config.publicUploadMaxBatchSize + 1024 * 1024), bodyLimit({ maxSize: container.config.publicUploadMaxBatchSize + 1024 * 1024 }), async (c) => {
-      const contentLength = Number(c.req.header("content-length") ?? 0);
-      if (Number.isFinite(contentLength) && contentLength > container.config.publicUploadMaxBatchSize + 1024 * 1024) {
-        return c.json({ error: "Upload batch exceeds the public total size limit" }, 413);
-      }
+    .post("/", admission(2, () => container.config.publicUploadMaxBatchSize + 1024 * 1024, { logger: container.logger }), async (c) => {
       const form = await c.req.formData();
       const files = form.getAll("file").filter((entry): entry is File => entry instanceof File);
       if (files.length > container.config.publicUploadMaxFiles) {
@@ -388,13 +383,30 @@ export function createApp(container: AppContainer) {
     .route("/upload", publicUpload)
     .route("/v1", programUpload);
 
+  const admittedBodyPaths = new Set(["/api/subset", "/api/upload", "/api/archives/contribute"]);
+  const uploadPaths = new Set(["/api/upload", "/api/v1/upload", "/api/fonts", "/api/archives/contribute", "/api/archives/upload"]);
   const app = new Hono()
-    .use("/api/*", async (c, next) => {
-      if (!["POST", "PUT", "PATCH"].includes(c.req.method) || c.req.path === "/api/subset") return next();
-      return bodyLimit({ maxSize: Math.max(container.config.publicUploadMaxBatchSize, container.config.archiveMaxFileSize, container.config.subsetMaxBatchSize) + 2 * 1024 * 1024 })(c, next);
+    .use("*", async (c, next) => {
+      const start = Date.now();
+      await next();
+      const message = `[http] ${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - start}ms`;
+      if (c.res.status >= 400) container.logger.warn(message);
+      else if (c.req.method === "POST" && uploadPaths.has(c.req.path)) container.logger.info(message);
+      else container.logger.debug(message);
     })
-    .use("*", async (c, next) => { const start = Date.now(); await next(); container.logger.debug(`${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - start}ms`); })
     .use("*", cors({ origin: container.config.corsOrigin, allowHeaders: ["*"], allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], exposeHeaders: ["X-Code", "X-Message", "Content-Disposition"] }))
+    .use("/api/*", async (c, next) => {
+      // These routes acquire their slot and enforce size/time limits before any
+      // body access. An outer bodyLimit would consume chunked uploads first.
+      if (!["POST", "PUT", "PATCH"].includes(c.req.method) || admittedBodyPaths.has(c.req.path)) return next();
+      const maximum = Math.max(container.config.publicUploadMaxBatchSize, container.config.archiveMaxFileSize, container.config.subsetMaxBatchSize) + 2 * 1024 * 1024;
+      try { c.req.raw = await readRequestBody(c.req.raw, maximum); }
+      catch (error) {
+        if (!(error instanceof RequestBodyError)) throw error;
+        return c.json({ error: error.message }, error.status, { "X-Code": "400" });
+      }
+      return next();
+    })
     .use("*", async (c, next) => {
       if (c.req.path === "/api/subset") return next();
       return compress()(c, next);
