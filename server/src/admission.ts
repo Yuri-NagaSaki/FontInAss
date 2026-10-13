@@ -23,7 +23,7 @@ export function admission(limit: number, maxBodyBytes: (contentType: string) => 
         c.req.raw = await readRequestBody(c.req.raw, maxBodyBytes(c.req.header("content-type") ?? ""), options.bodyTimeoutMs);
       } catch (error) {
         if (!(error instanceof RequestBodyError)) throw error;
-        options.logger?.warn(`[admission] ${c.req.method} ${c.req.path} status=${error.status} elapsed_ms=${Date.now() - startedAt} ${error.message}`);
+        options.logger?.warn(`[admission] ${c.req.method} ${c.req.path} status=${error.status} elapsed_ms=${Date.now() - startedAt} ${error.message} body=${JSON.stringify(error.details)}`);
         return c.json({ error: error.message }, error.status, { "X-Code": "400", "X-Message": Buffer.from(JSON.stringify([error.message])).toString("base64") });
       }
       // Keep the slot until processing finishes; a timeout must never release a

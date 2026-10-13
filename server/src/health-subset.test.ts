@@ -31,6 +31,58 @@ function testConfig(overrides: Partial<RuntimeConfig> = {}): RuntimeConfig {
 }
 
 describe("health and subset limits", () => {
+  test.each(["raw", "multipart"])("accepts a 20 MiB subtitle via %s without truncation", async protocol => {
+    const config = testConfig({ subsetMaxFileSize: 32 * 1024 * 1024, subsetMaxBatchSize: 64 * 1024 * 1024 });
+    const container = createContainer(config);
+    const bytes = new Uint8Array(20 * 1024 * 1024).fill(65);
+    const expectedHash = Bun.hash(bytes);
+    let processedBytes = 0;
+    container.subtitles = { async process(input) {
+      processedBytes = input.bytes.byteLength;
+      expect(Bun.hash(input.bytes)).toBe(expectedHash);
+      return { code: 200, messages: [], data: new Uint8Array([65]), fontCount: 1 };
+    } };
+    const form = new FormData();
+    form.append("file", new File([bytes], "large.ass"));
+    const app = createApp(container);
+    try {
+      const response = await app.request("/api/subset", { method: "POST", body: protocol === "raw" ? bytes : form });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("X-Code")).toBe("200");
+      expect(await response.text()).toBe("A");
+      expect(processedBytes).toBe(bytes.byteLength);
+    } finally { container.close(); }
+  });
+
+  test.each([
+    { sizes: [32], accepted: true },
+    { sizes: [33], accepted: false, message: "large-0.ass exceeds the size limit (size 33 bytes; limit 32 bytes)" },
+    { sizes: [32, 32], accepted: true },
+    { sizes: [32, 32, 1], accepted: false, message: "Subtitle batch exceeds the size limit (size 65 bytes; limit 64 bytes)" },
+  ])("enforces multipart file and batch boundaries: $sizes", async ({ sizes, accepted, message }) => {
+    const container = createContainer(testConfig({ subsetMaxFileSize: 32, subsetMaxBatchSize: 64 }));
+    let processed = 0;
+    container.subtitles = { async process() {
+      processed++;
+      return { code: 200, messages: [], data: new Uint8Array([65]), fontCount: 1 };
+    } };
+    const form = new FormData();
+    sizes.forEach((size, index) => form.append("file", new File([new Uint8Array(size)], `large-${index}.ass`)));
+    try {
+      const response = await createApp(container).request("/api/subset", { method: "POST", body: form });
+      expect(processed).toBe(accepted ? sizes.length : 0);
+      if (accepted && sizes.length > 1) {
+        const result = await response.json() as { results: Array<{ code: number }> };
+        expect(result.results.map(item => item.code)).toEqual(sizes.map(() => 200));
+      } else {
+        expect(response.headers.get("X-Code")).toBe(accepted ? "200" : "400");
+        if (!accepted) {
+          expect(JSON.parse(Buffer.from(response.headers.get("X-Message")!, "base64").toString())).toEqual([message]);
+        }
+      }
+    } finally { container.close(); }
+  });
+
   test("bounds all concurrent requests before reading bodies and releases slots", async () => {
     const config = testConfig({ subsetConcurrency: 1 });
     mkdirSync(config.logDirectory, { recursive: true });

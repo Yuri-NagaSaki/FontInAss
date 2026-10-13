@@ -48,8 +48,8 @@ Compose 默认监听 `127.0.0.1:3300`，容器内端口为 3000。对公网提�
 | `LOG_DIR` | `./data/logs` | 服务日志目录 |
 | `SUBSET_CONCURRENCY` | `2` | 全局同时处理的字幕请求数；批次内依次处理，超额请求返回 503 |
 | `SUBSET_MAX_FILES` | `20` | 单次批量字幕文件数上限 |
-| `SUBSET_MAX_FILE_SIZE` | `8388608` | 单个字幕文件最大字节数 |
-| `SUBSET_MAX_BATCH_SIZE` | `33554432` | 单次批量字幕总字节上限 |
+| `SUBSET_MAX_FILE_SIZE` | `33554432` | 单个字幕文件最大字节数，默认 32 MiB |
+| `SUBSET_MAX_BATCH_SIZE` | `67108864` | 单次批量字幕总字节上限，默认 64 MiB |
 | `CACHE_MAX_ENTRIES` | `100` | 字幕结果内存缓存条目数 |
 | `CACHE_MAX_BYTES` | `67108864` | 字幕结果内存缓存字节上限 |
 | `ACTIVITY_RETENTION_DAYS` | `30` | 处理日志保留天数 |
@@ -66,7 +66,9 @@ Compose 默认监听 `127.0.0.1:3300`，容器内端口为 3000。对公网提�
 | `R2_*` | _(空)_ | 分享库使用的 Cloudflare R2 配置 |
 完整配置示例见 [根目录 .env.example](../.env.example) 和 [server/.env.example](../server/.env.example)。源码还支持 `CACHE_TTL_MS`，默认 48 小时；Compose 需要显式添加该环境变量才会透传。
 
-`SUBSET_CONCURRENCY` 是全局同时处理请求数，单个批次内部依次处理。超出并发数时返回 HTTP 503 和 `Retry-After`。默认每个字幕 8 MiB、每批 32 MiB，过大请求会被拒绝。字体上传与字幕处理有不同限额，受信任成员上传仍受 HTTP 请求体上限限制。
+`SUBSET_CONCURRENCY` 是全局同时处理请求数，单个批次内部依次处理。超出并发数时返回 HTTP 503 和 `Retry-After`。默认每个字幕 32 MiB、每批 64 MiB，过大请求会被拒绝。已有部署若仍在 `.env` 中设置 `8388608` / `33554432`，需分别将 `SUBSET_MAX_FILE_SIZE` / `SUBSET_MAX_BATCH_SIZE` 改为新值并重建容器后生效。字体上传与字幕处理有不同限额，受信任成员上传仍受 HTTP 请求体上限限制。
+
+请求体读取失败的日志包含已接收字节数、声明的 `Content-Length`、当前上限和中断类型。HTTP 413 表示容量超限；`Request body was interrupted` 表示连接中断或流读取失败，需要结合客户端、代理和隧道日志定位，不能仅凭 HTTP 400 判断为服务端故障。HTTP 408 表示触发应用的 5 分钟请求体读取期限。`/api/v1/upload` 返回 HTTP 401 时，应检查 `X-Upload-Token` 或 `Authorization: Bearer` 中的上传凭证是否缺失、错误、停用或过期。
 
 容器限制为 3 GiB 内存、禁用 swap、128 个 PID，并启用日志轮转。原生字体进程另有内存、CPU、超时和生成数据上限，空闲或处理一定数量任务后回收。改变并发前应按实际字体负载测量内存和吞吐量。
 

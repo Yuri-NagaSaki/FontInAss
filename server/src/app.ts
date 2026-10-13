@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { Hono, type Context, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { admission } from "./admission.js";
-import { readRequestBody, RequestBodyError } from "./request-body.js";
+import { readRequestBody, RequestBodyError, sizeLimitMessage } from "./request-body.js";
 import { compress } from "hono/compress";
 import { cors } from "hono/cors";
 import { serveStatic } from "hono/bun";
@@ -149,15 +149,15 @@ export function createApp(container: AppContainer) {
       if (entries.length > maxFiles) return tooLarge(`Too many files (max ${maxFiles})`);
       let declared = 0;
       for (const file of entries) {
-        if (file.size > maxFileSize) return tooLarge(`${file.name} exceeds the subtitle size limit`);
+        if (file.size > maxFileSize) return tooLarge(sizeLimitMessage(file.name, file.size, maxFileSize));
         declared += file.size;
       }
-      if (declared > maxBatchSize) return tooLarge("Subtitle batch exceeds the size limit");
+      if (declared > maxBatchSize) return tooLarge(sizeLimitMessage("Subtitle batch", declared, maxBatchSize));
 
       if (entries.length === 1) {
         try {
           const bytes = new Uint8Array(await entries[0].arrayBuffer());
-          if (bytes.byteLength > maxFileSize) return tooLarge(`${entries[0].name} exceeds the subtitle size limit`);
+          if (bytes.byteLength > maxFileSize) return tooLarge(sizeLimitMessage(entries[0].name, bytes.byteLength, maxFileSize));
           const result = await processOne({ name: entries[0].name, bytes });
           return binarySubsetResponse(result.code, result.messages, result.data);
         } catch (error) {
@@ -170,8 +170,9 @@ export function createApp(container: AppContainer) {
       for (let offset = 0; offset < entries.length; offset += 1) {
         const chunk = entries.slice(offset, offset + 1);
         const loaded = await Promise.all(chunk.map(async (file) => ({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })));
-        if (loaded.some((file) => file.bytes.byteLength > maxFileSize)) {
-          return tooLarge("A subtitle file exceeds the size limit");
+        const oversized = loaded.find((file) => file.bytes.byteLength > maxFileSize);
+        if (oversized) {
+          return tooLarge(sizeLimitMessage(oversized.name, oversized.bytes.byteLength, maxFileSize));
         }
         const settled = await Promise.allSettled(loaded.map(processOne));
         settled.forEach((item, index) => {
@@ -185,7 +186,7 @@ export function createApp(container: AppContainer) {
 
     const bytes = new Uint8Array(await c.req.arrayBuffer());
     if (!bytes.byteLength) return binarySubsetResponse(CODE.CLIENT_ERROR, ["No file provided"], null);
-    if (bytes.byteLength > maxFileSize) return tooLarge("Subtitle exceeds the size limit");
+    if (bytes.byteLength > maxFileSize) return tooLarge(sizeLimitMessage("Subtitle", bytes.byteLength, maxFileSize));
     try {
       const result = await processOne({ name: decodeHeader(c.req.header("x-filename")) || "subtitle.ass", bytes });
       return binarySubsetResponse(result.code, result.messages, result.data);
@@ -403,6 +404,7 @@ export function createApp(container: AppContainer) {
       try { c.req.raw = await readRequestBody(c.req.raw, maximum); }
       catch (error) {
         if (!(error instanceof RequestBodyError)) throw error;
+        container.logger.warn(`[request-body] ${c.req.method} ${c.req.path} status=${error.status} ${error.message} body=${JSON.stringify(error.details)}`);
         return c.json({ error: error.message }, error.status, { "X-Code": "400" });
       }
       return next();
