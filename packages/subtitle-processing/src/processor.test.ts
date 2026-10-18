@@ -115,13 +115,65 @@ describe("DefaultSubtitleProcessor", () => {
     expect(loads).toBe(2);
   });
 
-  test("strict mode rejects missing punctuation instead of silently returning success", async () => {
+  test.each([false, true])("missing glyphs retain output and warnings with fontsCheck=%s", async fontsCheck => {
     const processor = new DefaultSubtitleProcessor(source(() => {}), silent, { cacheEntries: 0 });
     const bytes = assBytes("Fixture", "A—€");
-    const strict = await processor.process({ filename: "a.ass", bytes, options: { fontsCheck: true } });
-    expect(strict.code).toBe(CODE.MISSING_FONT);
-    expect(strict.data).toBeNull();
-    expect(strict.messages.join(" ")).toContain("—€");
+    const result = await processor.process({ filename: "a.ass", bytes, options: { fontsCheck } });
+    expect(result.code).toBe(CODE.WARN);
+    expect(result.messages).toEqual(["Missing glyphs in [Fixture]: —€"]);
+    const text = new TextDecoder().decode(result.data!);
+    expect(text).toContain("[Fonts]\nfontname:");
+    expect(text).toContain("[Events]");
+    expect(text).toContain("A—€");
+    const fontBlock = text.split(/fontname:[^\n]+\n/)[1].split("[Events]")[0];
+    const embedded = opentype.parse(uudecode(fontBlock.trim()).buffer as ArrayBuffer);
+    expect(embedded.charToGlyphIndex("A")).toBeGreaterThan(0);
+  });
+
+  test("repeated strict requests retain missing glyph warnings", async () => {
+    const processor = new DefaultSubtitleProcessor(source(() => {}), silent);
+    const input = { filename: "a.ass", bytes: assBytes("Fixture", "A—€"), options: { fontsCheck: true } };
+    const first = await processor.process(input);
+    const second = await processor.process(input);
+    expect(first.code).toBe(CODE.WARN);
+    expect(second.code).toBe(CODE.WARN);
+    expect(second.messages).toEqual(first.messages);
+    expect(second.data).toEqual(first.data);
+  });
+
+  test.each([false, true])("missing fonts keep their existing policy with fontsCheck=%s", async fontsCheck => {
+    const processor = new DefaultSubtitleProcessor(source(() => {}), silent);
+    const result = await processor.process({ filename: "a.ass", bytes: assBytes("Unknown"), options: { fontsCheck } });
+    expect(result.code).toBe(fontsCheck ? CODE.MISSING_FONT : CODE.WARN);
+    expect(result.messages).toEqual(["Missing font: [Unknown]"]);
+    expect(Boolean(result.data?.byteLength)).toBe(!fontsCheck);
+  });
+
+  for (const problem of ["load", "subset"] as const) {
+    test.each([false, true])(`${problem} failures keep their existing policy with fontsCheck=%s`, async fontsCheck => {
+      const fonts = source(() => {});
+      fonts.load = async () => problem === "load" ? null : { data: new Uint8Array([0]), resolvedKey: "broken.ttf" };
+      const processor = new DefaultSubtitleProcessor(fonts, silent);
+      const result = await processor.process({ filename: "a.ass", bytes: assBytes(), options: { fontsCheck } });
+      expect(result.code).toBe(fontsCheck ? CODE.MISSING_FONT : CODE.WARN);
+      expect(result.messages[0]).toStartWith(problem === "load" ? "Failed to load font:" : "Subsetting error");
+      expect(Boolean(result.data?.byteLength)).toBe(!fontsCheck);
+    });
+  }
+
+  test("strict mode still rejects font errors when another font has missing glyphs", async () => {
+    const fonts = source(() => {});
+    const load = fonts.load;
+    fonts.match = requests => new Map(requests.map(request => [request.key, { key: request.nameLower, fontIndex: 0 }]));
+    fonts.load = async key => key === "fixture" ? load(key) : null;
+    const processor = new DefaultSubtitleProcessor(fonts, silent);
+    const result = await processor.process({
+      filename: "a.ass", bytes: assBytes("Fixture", "A—€{\\fnBroken}A"), options: { fontsCheck: true },
+    });
+    expect(result.code).toBe(CODE.MISSING_FONT);
+    expect(result.data).toBeNull();
+    expect(result.messages).toContain("Missing glyphs in [Fixture]: —€");
+    expect(result.messages).toContain("Failed to load font: [Broken]");
   });
 
   test("font catalog changes invalidate successful cached results", async () => {

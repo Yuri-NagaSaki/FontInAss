@@ -187,13 +187,16 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
 
     const fontChunks = ["[Fonts]\n"];
     const warnings: string[] = [];
+    let hasFontErrors = false;
     const successful = new Set<string>();
     for (const [key] of entries) {
       const result = results.get(key);
       if (!result) continue;
       const [nameLower] = parseFontKey(key);
-      if (result.error) warnings.push(result.error);
-      else {
+      if (result.error) {
+        hasFontErrors = true;
+        warnings.push(result.error);
+      } else {
         fontChunks.push(result.encoded);
         successful.add(nameLower);
         if (result.missingGlyphs) warnings.push(`Missing glyphs in [${displayName(nameLower)}]: ${result.missingGlyphs}`);
@@ -213,7 +216,8 @@ export class DefaultSubtitleProcessor implements SubtitleProcessor {
       ? insertFontSubsetComments(renameAssFonts(removeFontSubsetComments(text), aliasByOriginal), aliasToOriginal)
       : removeFontSubsetComments(text);
 
-    if (options.fontsCheck && warnings.length) return { code: CODE.MISSING_FONT, messages: warnings, data: null, fontCount: entries.length };
+    // Missing glyphs do not prevent embedding the successfully generated subset.
+    if (options.fontsCheck && hasFontErrors) return { code: CODE.MISSING_FONT, messages: warnings, data: null, fontCount: entries.length };
     const eventsIndex = text.search(/^\s*\[Events\][ \t]*$/im);
     if (eventsIndex === -1) return failure(CODE.CLIENT_ERROR, "No [Events] section found in subtitle", entries.length);
     const output = new TextEncoder().encode(`\uFEFF${text.slice(0, eventsIndex)}${fontsSection}\n${text.slice(eventsIndex)}`);

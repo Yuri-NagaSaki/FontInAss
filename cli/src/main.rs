@@ -64,7 +64,7 @@ enum Commands {
         #[arg(long)]
         api_key: Option<String>,
 
-        /// Strict mode: fail if any font is missing (code 201/300 → error)
+        /// Fail on missing fonts or font processing errors; missing glyphs only warn
         #[arg(long)]
         strict: bool,
 
@@ -270,7 +270,7 @@ async fn run_subset(
         // Single file: use raw binary mode
         let result = client::subset_single(&client, &server, &files[0], &opts).await?;
         let out = output_path(&files[0], &output);
-        if result.code == 200 || (result.code == 201 && !strict) {
+        if result.code == 200 || result.code == 201 {
             write_result(&result, &out)?;
         }
         print_result(&result);
@@ -293,7 +293,7 @@ async fn run_subset(
                 Ok(results) => {
                     for (i, result) in results.iter().enumerate() {
                         let out = output_path(&chunk[i], &output);
-                        if result.code == 200 || (result.code == 201 && !strict) {
+                        if result.code == 200 || result.code == 201 {
                             write_result(result, &out)?;
                         }
                         print_result(result);
@@ -328,10 +328,9 @@ async fn run_subset(
 
     print_summary(&all_results);
 
-    // Exit with non-zero if any failures in strict mode
+    // The server applies strict font checks; 201 remains a usable warning result.
     let has_errors = all_results.iter().any(|r| r.code >= 300);
-    let has_warnings = all_results.iter().any(|r| r.code == 201);
-    Ok(if has_errors || (strict && has_warnings) {
+    Ok(if has_errors {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS

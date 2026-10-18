@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as B64;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::process::Command;
@@ -27,7 +29,8 @@ impl Drop for TestDirectory {
     }
 }
 
-async fn check_subset_request(file_count: usize, mode: Option<&str>) {
+async fn check_subset_request(codes: &[u16], mode: Option<&str>, strict: bool) {
+    let file_count = codes.len();
     let directory = TestDirectory::new();
     let files: Vec<_> = (0..file_count)
         .map(|i| directory.0.join(format!("{i}.ass")))
@@ -37,6 +40,7 @@ async fn check_subset_request(file_count: usize, mode: Option<&str>) {
     }
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
+    let response_codes = codes.to_vec();
     let server = tokio::spawn(async move {
         timeout(Duration::from_secs(10), async move {
             let (socket, _) = listener.accept().await.unwrap();
@@ -57,16 +61,25 @@ async fn check_subset_request(file_count: usize, mode: Option<&str>) {
             let mut body = vec![0; content_length];
             reader.read_exact(&mut body).await.unwrap();
 
+            let messages = |code| match code {
+                201 => vec!["Missing glyphs in [Fixture]: —€"],
+                300 => vec!["Missing font: [Unknown]"],
+                500 => vec!["Internal server error"],
+                _ => vec![],
+            };
             let response_body = if file_count == 1 {
-                "processed".to_owned()
+                if response_codes[0] <= 201 { "processed" } else { "" }.to_owned()
             } else {
                 serde_json::json!({ "results": (0..file_count).map(|i| serde_json::json!({
-                    "filename": format!("{i}.ass"), "code": 200, "data": "cHJvY2Vzc2Vk"
+                    "filename": format!("{i}.ass"), "code": response_codes[i],
+                    "messages": messages(response_codes[i]),
+                    "data": if response_codes[i] <= 201 { Some("cHJvY2Vzc2Vk") } else { None }
                 })).collect::<Vec<_>>() }).to_string()
             };
             let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nX-Code: 200\r\nConnection: close\r\n\r\n{}",
-                response_body.len(), response_body
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nX-Code: {}\r\nX-Message: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(), response_codes[0],
+                B64.encode(serde_json::to_vec(&messages(response_codes[0])).unwrap()), response_body
             );
             reader.get_mut().write_all(response.as_bytes()).await.unwrap();
             headers
@@ -80,9 +93,11 @@ async fn check_subset_request(file_count: usize, mode: Option<&str>) {
         &format!("http://{address}"),
         "--api-key",
         "",
-        "--strict",
         "--clean",
     ]);
+    if strict {
+        command.arg("--strict");
+    }
     command.arg("--output").arg(directory.0.join("output"));
     if let Some(mode) = mode {
         command.args(["--font-name-mode", mode]);
@@ -92,8 +107,9 @@ async fn check_subset_request(file_count: usize, mode: Option<&str>) {
         .await
         .expect("CLI timed out")
         .unwrap();
-    assert!(
+    assert_eq!(
         output.status.success(),
+        codes.iter().all(|code| *code <= 201),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -103,20 +119,24 @@ async fn check_subset_request(file_count: usize, mode: Option<&str>) {
         "\r\nx-font-name-mode: {}\r\n",
         mode.unwrap_or("alias")
     )));
-    assert!(headers.contains("\r\nx-fonts-check: 1\r\n"));
+    assert!(headers.contains(&format!("\r\nx-fonts-check: {}\r\n", u8::from(strict))));
     assert!(headers.contains("\r\nx-clear-fonts: 1\r\n"));
     assert!(headers.contains(if file_count == 1 {
         "application/octet-stream"
     } else {
         "multipart/form-data"
     }));
-    for file in &files {
-        assert_eq!(
-            std::fs::read_to_string(directory.0.join("output").join(file.file_name().unwrap()))
-                .unwrap(),
-            "processed"
-        );
+    for (file, code) in files.iter().zip(codes) {
+        let target = directory.0.join("output").join(file.file_name().unwrap());
+        if *code <= 201 {
+            assert_eq!(std::fs::read_to_string(target).unwrap(), "processed");
+        } else {
+            assert!(!target.exists());
+        }
         assert_eq!(std::fs::read_to_string(file).unwrap(), "original");
+    }
+    if codes.contains(&201) {
+        assert!(String::from_utf8_lossy(&output.stdout).contains("—€"));
     }
 }
 
@@ -124,8 +144,29 @@ async fn check_subset_request(file_count: usize, mode: Option<&str>) {
 async fn transmits_font_name_mode_for_single_and_batch_requests() {
     for file_count in [1, 2] {
         for mode in [None, Some("alias"), Some("preserve")] {
-            check_subset_request(file_count, mode).await;
+            check_subset_request(&vec![200; file_count], mode, true).await;
         }
+    }
+}
+
+#[tokio::test]
+async fn strict_mode_saves_glyph_warnings_but_rejects_font_errors() {
+    for codes in [
+        vec![201],
+        vec![201, 201],
+        vec![300],
+        vec![201, 300],
+        vec![300, 201],
+        vec![500],
+    ] {
+        check_subset_request(&codes, None, true).await;
+    }
+}
+
+#[tokio::test]
+async fn normal_mode_still_saves_warning_results() {
+    for codes in [vec![201], vec![200, 201]] {
+        check_subset_request(&codes, None, false).await;
     }
 }
 

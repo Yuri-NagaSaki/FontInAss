@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::client::SubsetResult;
 
-// Server status codes mirrored from server/src/types.ts
+// Server status codes mirrored from packages/contracts/src/index.ts
 const CODE_OK: u16 = 200;
 const CODE_WARN: u16 = 201;
 const CODE_MISSING_FONT: u16 = 300;
@@ -85,8 +85,12 @@ pub fn print_result(result: &SubsetResult) {
 
     let suffix = match result.code {
         CODE_OK | CODE_WARN => dim.apply_to(format!("({})", size)).to_string(),
-        CODE_MISSING_FONT => err_style.apply_to(format!("[code {} · 缺字体]", result.code)).to_string(),
-        _ => err_style.apply_to(format!("[code {}]", result.code)).to_string(),
+        CODE_MISSING_FONT => err_style
+            .apply_to(format!("[code {} · 字体检查失败]", result.code))
+            .to_string(),
+        _ => err_style
+            .apply_to(format!("[code {}]", result.code))
+            .to_string(),
     };
 
     println!("  {} {} {}", icon, result.filename, suffix);
@@ -134,18 +138,24 @@ pub fn print_summary(results: &[SubsetResult]) {
 
     let ok = results.iter().filter(|r| r.code == CODE_OK).count();
     let warn = results.iter().filter(|r| r.code == CODE_WARN).count();
-    let missing = results.iter().filter(|r| r.code == CODE_MISSING_FONT).count();
-    let fail = results.iter().filter(|r| r.code >= 300 && r.code != CODE_MISSING_FONT).count();
+    let font_errors = results
+        .iter()
+        .filter(|r| r.code == CODE_MISSING_FONT)
+        .count();
+    let fail = results
+        .iter()
+        .filter(|r| r.code >= 300 && r.code != CODE_MISSING_FONT)
+        .count();
 
     println!();
     println!(
-        "  {} {} ok  {} {} warn  {} {} 缺字体  {} {} fail  {} {} total",
+        "  {} {} ok  {} {} warn  {} {} 字体检查失败  {} {} fail  {} {} total",
         ok_style.apply_to("●"),
         ok,
         warn_style.apply_to("●"),
         warn,
         err_style.apply_to("●"),
-        missing,
+        font_errors,
         err_style.apply_to("●"),
         fail,
         dim.apply_to("●"),

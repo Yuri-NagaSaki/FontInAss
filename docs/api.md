@@ -28,7 +28,7 @@ Content-Type: application/octet-stream
 | 请求头 | 值与默认行为 |
 | --- | --- |
 | `X-Filename` | UTF-8 文件名的 base64；省略时记录为 `subtitle.ass` |
-| `X-Fonts-Check` | `1` 启用严格模式，默认关闭 |
+| `X-Fonts-Check` | `1` 启用严格模式：缺失字体或字体处理失败时不输出结果，仅缺失字形仍输出并警告；默认关闭 |
 | `X-Clear-Fonts` | `1` 清理已有 `[Fonts]` 后重做，默认关闭 |
 | `X-Font-Name-Mode` | `alias` 或 `preserve`，默认 `alias` |
 | `X-Font-Alias-Salt` | UTF-8 别名盐的 base64，最多 80 个字符 |
@@ -45,11 +45,13 @@ Content-Type: application/octet-stream
 | --- | --- | --- |
 | `200` | 成功 | 二进制字幕 |
 | `201` | 已生成，存在缺失字体、字形或其他警告 | 二进制字幕，需查看消息 |
-| `300` | 严格模式未通过字体或字形检查 | 空 |
+| `300` | 严格模式下缺失字体或字体处理失败 | 空 |
 | `400` | 文件、格式、限额等输入错误 | 空 |
 | `500` | 服务端处理错误 | 空 |
 
 部分业务错误通过 HTTP 200 返回，必须检查 `X-Code`。非法表单/参数可返回 HTTP 400，请求体过大可返回 HTTP 413，并发已满返回 HTTP 503 和 `Retry-After`；这些响应可能是 JSON，不应写成字幕。超长错误消息会截断到响应头预算，完整处理消息可在活动记录中查看。
+
+仅缺失字形在普通模式和严格模式下均返回 `201` 并输出结果。警告不表示缺失字形已补齐，实际显示仍取决于播放器的字体回退和可用字体。
 
 以下 Bun 示例先验证状态，再落盘：
 
@@ -70,9 +72,10 @@ const messages = header
   ? JSON.parse(Buffer.from(header, "base64").toString("utf8"))
   : [];
 const code = Number(response.headers.get("X-Code"));
-if (!response.ok || code !== 200) {
+if (!response.ok || (code !== 200 && code !== 201)) {
   throw new Error(`HTTP ${response.status}, X-Code ${code}: ${messages.join("; ")}`);
 }
+if (code === 201) console.warn(messages.join("; "));
 const bytes = await response.arrayBuffer();
 if (bytes.byteLength === 0) throw new Error("Empty subtitle response");
 await Bun.write("output.ass", bytes);
@@ -101,7 +104,7 @@ curl -sS \
 }
 ```
 
-批次中的任一 `code >= 400` 时 HTTP 状态为 207，否则为 200。严格缺字 `300` 不会单独触发 HTTP 207，仍需逐个检查业务码。批次预检失败会使用单文件的 `X-Code`/`X-Message` 错误响应；客户端应先判断 Content-Type 和状态，不能无条件解析 JSON。
+批次中的任一 `code >= 400` 时 HTTP 状态为 207，否则为 200。严格模式字体检查失败 `300` 不会单独触发 HTTP 207，仍需逐个检查业务码。仅缺失字形在两种模式下均返回 `201` 并输出结果。批次预检失败会使用单文件的 `X-Code`/`X-Message` 错误响应；客户端应先判断 Content-Type 和状态，不能无条件解析 JSON。
 
 默认最多 20 个文件、每个 32 MiB、整批 64 MiB；管理员可调整。超限消息包含文件或请求体的大小及上限；multipart 请求体另有 1 MiB 的封装余量，文件总量仍受批量上限限制。批次内部依次执行，全局同时处理请求数默认 2。重复请求可能命中结果缓存，但仍会生成处理日志。
 
